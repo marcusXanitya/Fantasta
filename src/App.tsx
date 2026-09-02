@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -164,6 +165,9 @@ function normalizeSearch(
 }
 
 function App() {
+  const isTvMode =
+    window.location.pathname.replace(/\/+$/, "") === "/tv";
+
   const [teams, setTeams] =
     useState<Team[]>([]);
 
@@ -179,6 +183,9 @@ function App() {
     useState<
       DatabasePurchase[]
     >([]);
+
+  const [calledPlayerId, setCalledPlayerId] = useState<number | null>(null);
+  const [isCallingPlayer, setIsCallingPlayer] = useState(false);
 
   const [
     leagueSettings,
@@ -592,6 +599,21 @@ function App() {
       [],
     );
 
+  const loadCalledPlayer = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("auction_state")
+      .select("called_player_id")
+      .eq("id", 1)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Errore lettura giocatore chiamato:", error);
+      return;
+    }
+
+    setCalledPlayerId(data?.called_player_id ?? null);
+  }, []);
+
   useEffect(() => {
     let mounted = true;
 
@@ -647,6 +669,7 @@ function App() {
 
   useEffect(() => {
     void loadAuctionData();
+    void loadCalledPlayer();
 
     const channel =
       supabase
@@ -665,6 +688,7 @@ function App() {
               payload,
             );
             void loadAuctionData();
+            void loadCalledPlayer();
           },
         )
         .subscribe(
@@ -681,7 +705,7 @@ function App() {
         channel,
       );
     };
-  }, [loadAuctionData]);
+  }, [loadAuctionData, loadCalledPlayer]);
 
   const assignedPlayerIds =
     useMemo(() => {
@@ -743,6 +767,36 @@ function App() {
         selectedPlayerId,
     ) ?? null;
 
+  const calledPlayer =
+    allPlayers.find((player) => player.id === calledPlayerId) ?? null;
+
+  async function callSelectedPlayer() {
+    if (!selectedPlayer || !session || isCallingPlayer) return;
+    setIsCallingPlayer(true);
+    const { error } = await supabase
+      .from("auction_state")
+      .update({ called_player_id: selectedPlayer.id, called_at: new Date().toISOString() })
+      .eq("id", 1);
+    if (error) {
+      console.error("Errore chiamata giocatore:", error);
+      alert("Errore durante la chiamata del giocatore.");
+      setIsCallingPlayer(false);
+      return;
+    }
+    setCalledPlayerId(selectedPlayer.id);
+    setIsCallingPlayer(false);
+    window.setTimeout(() => quickTeamRef.current?.focus(), 0);
+  }
+
+  async function clearCalledPlayer() {
+    if (!session) return;
+    const { error } = await supabase
+      .from("auction_state")
+      .update({ called_player_id: null, called_at: null })
+      .eq("id", 1);
+    if (!error) setCalledPlayerId(null);
+  }
+
   const selectedTeam =
     teams.find(
       (team) =>
@@ -758,6 +812,52 @@ function App() {
             editingPurchase.playerId,
         ) ?? null
       : null;
+
+  const recentPurchases =
+    useMemo(() => {
+      return purchases
+        .slice(-5)
+        .reverse()
+        .map((purchase) => {
+          const player =
+            allPlayers.find(
+              (candidate) =>
+                candidate.id ===
+                purchase.player_id,
+            );
+
+          const team =
+            teams.find(
+              (candidate) =>
+                candidate.id ===
+                purchase.team_id,
+            );
+
+          if (!player || !team) {
+            return null;
+          }
+
+          return {
+            purchaseId:
+              purchase.id,
+            teamId: team.id,
+            teamName: team.name,
+            player: {
+              ...player,
+              price:
+                purchase.price,
+            },
+          };
+        })
+        .filter(
+          (purchase): purchase is NonNullable<typeof purchase> =>
+            purchase !== null,
+        );
+    }, [
+      purchases,
+      allPlayers,
+      teams,
+    ]);
 
   function buildLeagueDraft() {
     setLeagueDraft({
@@ -802,6 +902,46 @@ function App() {
     });
   }
 
+  const quickSearchRef = useRef<HTMLInputElement>(null);
+  const quickTeamRef = useRef<HTMLSelectElement>(null);
+  const quickPriceRef = useRef<HTMLInputElement>(null);
+  const [quickResultIndex, setQuickResultIndex] = useState(0);
+
+  function handleQuickSearchKeyDown(
+    event: React.KeyboardEvent<HTMLInputElement>,
+  ) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      clearSelectedPlayer();
+      return;
+    }
+
+    if (selectedPlayer || searchResults.length === 0) {
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setQuickResultIndex((current) =>
+        Math.min(current + 1, searchResults.length - 1),
+      );
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setQuickResultIndex((current) =>
+        Math.max(current - 1, 0),
+      );
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      selectPlayer(searchResults[quickResultIndex] ?? searchResults[0]);
+    }
+  }
+
   function selectPlayer(
     player: Player,
   ) {
@@ -812,14 +952,17 @@ function App() {
     setPlayerSearch(
       player.name,
     );
+
   }
 
   function clearSelectedPlayer() {
-    setSelectedPlayerId(
-      null,
-    );
-
+    setSelectedPlayerId(null);
     setPlayerSearch("");
+    setQuickResultIndex(0);
+
+    window.setTimeout(() => {
+      quickSearchRef.current?.focus();
+    }, 0);
   }
 
   function openAdmin() {
@@ -1453,6 +1596,12 @@ function App() {
       return;
     }
 
+    await supabase
+      .from("auction_state")
+      .update({ called_player_id: null, called_at: null })
+      .eq("id", 1);
+    setCalledPlayerId(null);
+
     setSelectedPlayerId(
       null,
     );
@@ -1468,6 +1617,10 @@ function App() {
     await loadAuctionData();
 
     setIsSaving(false);
+
+    window.setTimeout(() => {
+      quickSearchRef.current?.focus();
+    }, 0);
   }
 
   function openEditPurchase(
@@ -1854,8 +2007,495 @@ function App() {
       leagueSettings.roleLimits,
     );
 
+  if (isTvMode) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          height: "100vh",
+          overflow: "hidden",
+          background: "#0d0f13",
+          color: "#f4f6f8",
+          padding: "clamp(10px, 1.1vw, 20px)",
+          display: "grid",
+          gridTemplateRows: "auto auto auto minmax(0, 1fr)",
+          gap: "clamp(8px, .8vw, 14px)",
+        }}
+      >
+        <header
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "20px",
+            minHeight: "48px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: "14px",
+              minWidth: 0,
+            }}
+          >
+            <strong
+              style={{
+                fontSize: "clamp(22px, 1.8vw, 34px)",
+                letterSpacing: "-.04em",
+                whiteSpace: "nowrap",
+              }}
+            >
+              FantAsta
+            </strong>
+            <span
+              style={{
+                color: "rgba(255,255,255,.68)",
+                fontSize: "clamp(13px, .9vw, 18px)",
+                fontWeight: 700,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {leagueSettings.leagueName}
+            </span>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span
+              style={{
+                width: "9px",
+                height: "9px",
+                borderRadius: "50%",
+                background: "#48d597",
+                boxShadow: "0 0 12px rgba(72,213,151,.75)",
+              }}
+            />
+            <strong
+              style={{
+                fontSize: "clamp(11px, .7vw, 14px)",
+                letterSpacing: ".12em",
+              }}
+            >
+              LIVE
+            </strong>
+          </div>
+        </header>
+
+        <section
+          style={{
+            minHeight: "76px",
+            borderRadius: "12px",
+            border: calledPlayer ? "1px solid rgba(103,232,249,.35)" : "1px solid rgba(255,255,255,.06)",
+            background: calledPlayer ? "rgba(103,232,249,.07)" : "rgba(255,255,255,.02)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            textAlign: "center",
+            padding: "8px 20px",
+          }}
+        >
+          {calledPlayer ? (
+            <div>
+              <div style={{ fontSize: "clamp(9px,.62vw,12px)", fontWeight: 800, letterSpacing: ".16em", color: "rgba(103,232,249,.8)", textTransform: "uppercase" }}>Giocatore all'asta</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", flexWrap: "wrap", marginTop: "4px" }}>
+                <span style={{ fontSize: "clamp(26px,2.6vw,50px)", lineHeight: 1, fontWeight: 950, letterSpacing: "-.035em" }}>
+                  {calledPlayer.name} <span style={{ color: "rgba(255,255,255,.5)", fontWeight: 750 }}>({calledPlayer.club})</span>
+                </span>
+                <span
+                  className={`role-badge role-${calledPlayer.role.toLowerCase()}`}
+                  style={{
+                    fontSize: "clamp(22px,1.8vw,32px)",
+                    width: "clamp(46px,3.3vw,64px)",
+                    height: "clamp(46px,3.3vw,64px)",
+                    flex: "0 0 auto",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: "12px",
+                    border: "1px solid rgba(255,255,255,.22)",
+                    boxShadow: "0 8px 24px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.14)",
+                    fontWeight: 950,
+                    lineHeight: 1,
+                  }}
+                >
+                  {calledPlayer.role}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div style={{ color: "rgba(255,255,255,.28)", fontWeight: 800, letterSpacing: ".1em", textTransform: "uppercase", fontSize: "clamp(10px,.7vw,13px)" }}>In attesa della prossima chiamata</div>
+          )}
+        </section>
+
+        <section
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+            gap: "8px",
+          }}
+        >
+          {Array.from({ length: 5 }).map((_, index) => {
+            const item = recentPurchases[index];
+
+            if (!item) {
+              return (
+                <div
+                  key={`tv-recent-empty-${index}`}
+                  style={{
+                    minHeight: "52px",
+                    border: "1px solid rgba(255,255,255,.06)",
+                    borderRadius: "10px",
+                    background: "rgba(255,255,255,.02)",
+                  }}
+                />
+              );
+            }
+
+            return (
+              <div
+                key={item.purchaseId}
+                style={{
+                  minWidth: 0,
+                  padding: "8px 10px",
+                  borderRadius: "10px",
+                  border:
+                    index === 0
+                      ? "1px solid rgba(255,255,255,.20)"
+                      : "1px solid rgba(255,255,255,.08)",
+                  background:
+                    index === 0
+                      ? "rgba(255,255,255,.08)"
+                      : "rgba(255,255,255,.035)",
+                  display: "grid",
+                  gridTemplateColumns: "auto minmax(0, 1fr) auto",
+                  alignItems: "center",
+                  gap: "8px",
+                }}
+              >
+                <span className={`role-badge role-${item.player.role.toLowerCase()}`}>
+                  {item.player.role}
+                </span>
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: "clamp(11px, .75vw, 15px)",
+                      fontWeight: 800,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {item.player.name} <span style={{ color: "rgba(255,255,255,.48)", fontWeight: 650 }}>({item.player.club})</span>
+                  </div>
+                  <div
+                    style={{
+                      color: "rgba(255,255,255,.62)",
+                      fontSize: "clamp(9px, .58vw, 12px)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {item.teamName}
+                  </div>
+                </div>
+                <strong style={{ fontSize: "clamp(14px, 1vw, 20px)", display: "flex", alignItems: "center", gap: "4px" }}>
+                  <span className="coin">C</span>{item.player.price}
+                </strong>
+              </div>
+            );
+          })}
+        </section>
+
+        <section
+          style={{
+            minHeight: 0,
+            display: "grid",
+            gridTemplateColumns: `repeat(${Math.max(teams.length, 1)}, minmax(0, 1fr))`,
+            gap: "clamp(4px, .42vw, 8px)",
+          }}
+        >
+          {teams.map((team) => {
+            const credits = calculateCredits(team);
+            const maxBid = calculateMaxBid(team, leagueSettings.roleLimits);
+
+            return (
+              <article
+                key={team.id}
+                style={{
+                  minWidth: 0,
+                  minHeight: 0,
+                  overflow: "hidden",
+                  borderRadius: "10px",
+                  border: "1px solid rgba(255,255,255,.10)",
+                  background: "#15181e",
+                  display: "grid",
+                  gridTemplateRows: "auto minmax(0, 1fr)",
+                }}
+              >
+                <header
+                  style={{
+                    padding: "clamp(7px, .55vw, 11px)",
+                    borderBottom: "1px solid rgba(255,255,255,.09)",
+                    background: "rgba(255,255,255,.035)",
+                  }}
+                >
+                  <div
+                    style={{
+                      minHeight: "30px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "5px",
+                    }}
+                  >
+                    <strong
+                      title={team.name}
+                      style={{
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontSize: "clamp(12px, .88vw, 18px)",
+                      }}
+                    >
+                      {team.name}
+                    </strong>
+                    <span
+                      style={{
+                        fontSize: "clamp(14px, 1.15vw, 23px)",
+                        fontWeight: 900,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {credits}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: "5px",
+                      color: "rgba(255,255,255,.48)",
+                      fontSize: "clamp(8px, .5vw, 10px)",
+                    }}
+                  >
+                    <span>max {maxBid}</span>
+                    <span>{team.players.length}/{totalRosterSlots}</span>
+                  </div>
+                </header>
+
+                <div
+                  style={{
+                    minHeight: 0,
+                    overflow: "hidden",
+                    display: "grid",
+                    gridTemplateRows: `repeat(${roles.length}, minmax(0, auto))`,
+                    alignContent: "start",
+                  }}
+                >
+                  {roles.map((role) => {
+                    const rolePlayers = getRolePlayers(team, role);
+                    const emptySlots = Math.max(
+                      0,
+                      leagueSettings.roleLimits[role] - rolePlayers.length,
+                    );
+
+                    return (
+                      <section
+                        key={role}
+                        style={{
+                          minWidth: 0,
+                          borderBottom: "1px solid rgba(255,255,255,.055)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: "clamp(16px, 1.25vh, 22px)",
+                            padding: "0 6px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            fontSize: "clamp(8px, .5vw, 10px)",
+                            fontWeight: 900,
+                            color: "rgba(255,255,255,.72)",
+                          }}
+                        >
+                          <span>{role}</span>
+                          <span>{rolePlayers.length}/{leagueSettings.roleLimits[role]}</span>
+                        </div>
+
+                        {rolePlayers.map((player) => (
+                          <div
+                            key={player.id}
+                            style={{
+                              height: "clamp(18px, 1.78vh, 27px)",
+                              minWidth: 0,
+                              padding: "0 6px",
+                              display: "grid",
+                              gridTemplateColumns: "minmax(0, 1fr) auto",
+                              alignItems: "center",
+                              gap: "4px",
+                              borderTop: "1px solid rgba(255,255,255,.035)",
+                            }}
+                          >
+                            <span
+                              title={player.name}
+                              style={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                fontWeight: 700,
+                                fontSize: "clamp(8px, .55vw, 11px)",
+                              }}
+                            >
+                              {player.name}
+                            </span>
+                            <strong
+                              style={{
+                                fontSize: "clamp(8px, .55vw, 11px)",
+                              }}
+                            >
+                              {player.price}
+                            </strong>
+                          </div>
+                        ))}
+
+                        {Array.from({ length: emptySlots }).map((_, index) => (
+                          <div
+                            key={`${team.id}-${role}-tv-empty-${index}`}
+                            style={{
+                              height: "clamp(18px, 1.78vh, 27px)",
+                              borderTop: "1px solid rgba(255,255,255,.025)",
+                              background: "rgba(255,255,255,.008)",
+                            }}
+                          />
+                        ))}
+                      </section>
+                    );
+                  })}
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="auction-app">
+      <style>{`
+        @media (max-width: 980px) {
+          .main-header {
+            align-items: flex-start;
+            gap: 14px;
+            flex-wrap: wrap;
+          }
+
+          .header-actions {
+            width: 100%;
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding-bottom: 2px;
+          }
+
+          .header-actions button {
+            flex: 0 0 auto;
+          }
+
+          .quick-auction-panel {
+            padding: 16px !important;
+            border-radius: 18px !important;
+          }
+
+          .quick-auction-grid {
+            grid-template-columns: 1fr 1fr !important;
+          }
+
+          .teams-board {
+            overflow-x: auto !important;
+            scroll-snap-type: x proximity;
+            -webkit-overflow-scrolling: touch;
+            padding-bottom: 10px;
+          }
+
+          .team-column {
+            scroll-snap-align: start;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .auction-app {
+            padding: 14px !important;
+          }
+
+          .main-header h1 {
+            font-size: clamp(28px, 10vw, 42px) !important;
+          }
+
+          .quick-auction-panel {
+            margin-bottom: 16px !important;
+            padding: 14px !important;
+          }
+
+          .quick-auction-grid {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+          }
+
+          .quick-auction-grid input,
+          .quick-auction-grid select,
+          .quick-auction-grid button {
+            min-height: 54px !important;
+          }
+
+          .current-player-panel {
+            padding: 14px !important;
+            border-radius: 16px !important;
+          }
+
+          .teams-board {
+            display: grid !important;
+            grid-auto-flow: column;
+            grid-auto-columns: minmax(270px, 82vw);
+            grid-template-columns: none !important;
+            gap: 10px !important;
+            overflow-x: auto !important;
+            scroll-snap-type: x mandatory;
+            overscroll-behavior-x: contain;
+          }
+
+          .team-column {
+            min-width: 0 !important;
+            scroll-snap-align: start;
+          }
+
+          .team-name-row h2 {
+            font-size: 20px !important;
+          }
+
+          .modal-backdrop {
+            padding: 10px !important;
+          }
+
+          .admin-modal {
+            max-height: calc(100vh - 20px) !important;
+            padding: 16px !important;
+            border-radius: 16px !important;
+          }
+        }
+      `}</style>
       <header className="main-header">
         <div>
           <p className="eyebrow">
@@ -1871,7 +2511,16 @@ function App() {
         </div>
 
         <div className="header-actions">
-          <button className="secondary-button">
+          <button
+            className="secondary-button"
+            onClick={() =>
+              window.open(
+                `${window.location.origin}/tv`,
+                "_blank",
+                "noopener,noreferrer",
+              )
+            }
+          >
             Modalità TV
           </button>
 
@@ -1914,80 +2563,724 @@ function App() {
       </header>
 
       <main>
-        <section className="current-player-panel">
-          <div>
-            <p className="current-label">
-              {lastPurchase
-                ? "Ultimo acquisto"
-                : "Pronto per l'asta"}
-            </p>
+        {session && (
+          <section
+            className="quick-auction-panel"
+            style={{
+              marginBottom: "24px",
+              padding: "22px",
+              border: "1px solid rgba(255,255,255,.16)",
+              borderRadius: "22px",
+              background:
+                "linear-gradient(135deg, rgba(34,39,49,.98), rgba(18,21,27,.98))",
+              boxShadow:
+                "0 18px 55px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.05)",
+              position: "relative",
+              zIndex: 20,
+              overflow: "visible",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "16px",
+                marginBottom: "18px",
+                flexWrap: "wrap",
+              }}
+            >
+              <div>
+                <p
+                  className="eyebrow"
+                  style={{
+                    margin: "0 0 5px",
+                    fontSize: "12px",
+                    letterSpacing: ".14em",
+                  }}
+                >
+                  CONTROLLO ADMIN
+                </p>
 
-            {lastPurchase ? (
-              <>
-                <div className="current-role">
-                  {
-                    lastPurchase
-                      .player.role
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: "clamp(24px, 2.3vw, 34px)",
+                    lineHeight: 1.05,
+                    letterSpacing: "-.03em",
+                  }}
+                >
+                  Asta rapida
+                </h2>
+
+                <p
+                  style={{
+                    margin: "7px 0 0",
+                    color: "rgba(255,255,255,.58)",
+                    fontSize: "14px",
+                  }}
+                >
+                  Cerca il giocatore, scegli la squadra, inserisci il prezzo e premi Invio.
+                </p>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  padding: "8px 12px",
+                  borderRadius: "999px",
+                  background: "rgba(103, 232, 249, .08)",
+                  border: "1px solid rgba(103, 232, 249, .18)",
+                  color: "rgba(255,255,255,.8)",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                  letterSpacing: ".06em",
+                  textTransform: "uppercase",
+                }}
+              >
+                <span
+                  style={{
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "999px",
+                    background: "#67e8f9",
+                    boxShadow: "0 0 12px rgba(103,232,249,.8)",
+                  }}
+                />
+                Pronto
+              </div>
+            </div>
+
+            <div
+              className="quick-auction-grid"
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "minmax(300px, 2fr) minmax(130px,.7fr) minmax(210px,1.1fr) minmax(135px,.65fr) minmax(145px,.7fr)",
+                gap: "14px",
+                alignItems: "stretch",
+              }}
+            >
+              <label
+                style={{
+                  position: "relative",
+                  display: "grid",
+                  gap: "8px",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  color: "rgba(255,255,255,.72)",
+                }}
+              >
+                <span>1 · Cerca giocatore</span>
+
+                <div style={{ position: "relative" }}>
+                  <input
+                    ref={quickSearchRef}
+                    type="text"
+                    value={playerSearch}
+                    onChange={(event) => {
+                      setPlayerSearch(event.target.value);
+                      setSelectedPlayerId(null);
+                      setQuickResultIndex(0);
+                    }}
+                    onKeyDown={handleQuickSearchKeyDown}
+                    placeholder="Scrivi nome, squadra o ruolo…"
+                    autoComplete="off"
+                    disabled={isSaving}
+                    style={{
+                      width: "100%",
+                      minHeight: "58px",
+                      padding: "0 18px",
+                      borderRadius: "14px",
+                      border: selectedPlayer
+                        ? "1px solid rgba(103,232,249,.55)"
+                        : "1px solid rgba(255,255,255,.16)",
+                      background: selectedPlayer
+                        ? "rgba(103,232,249,.07)"
+                        : "rgba(5,7,10,.48)",
+                      color: "#fff",
+                      fontSize: "18px",
+                      fontWeight: 700,
+                      outline: "none",
+                      boxShadow: selectedPlayer
+                        ? "0 0 0 3px rgba(103,232,249,.06)"
+                        : "none",
+                    }}
+                  />
+
+                  {selectedPlayer && (
+                    <button
+                      type="button"
+                      onClick={clearSelectedPlayer}
+                      disabled={isSaving}
+                      title="Cambia giocatore"
+                      style={{
+                        position: "absolute",
+                        right: "10px",
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        width: "34px",
+                        height: "34px",
+                        border: "1px solid rgba(255,255,255,.15)",
+                        borderRadius: "10px",
+                        background: "rgba(0,0,0,.2)",
+                        color: "rgba(255,255,255,.7)",
+                        cursor: "pointer",
+                        fontSize: "18px",
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
+
+                  {!selectedPlayer &&
+                    playerSearch.trim().length > 0 && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          right: 0,
+                          top: "100%",
+                          marginTop: "8px",
+                          padding: "8px",
+                          display: "grid",
+                          gap: "6px",
+                          background: "#11151c",
+                          border: "1px solid rgba(255,255,255,.16)",
+                          borderRadius: "14px",
+                          boxShadow: "0 22px 55px rgba(0,0,0,.55)",
+                          maxHeight: "330px",
+                          overflowY: "auto",
+                          zIndex: 100,
+                        }}
+                      >
+                        {searchResults.length > 0 ? (
+                          searchResults.map((player, index) => (
+                            <button
+                              key={player.id}
+                              type="button"
+                              className="player-slot filled editable-player"
+                              onClick={() => selectPlayer(player)}
+                              onMouseEnter={() => setQuickResultIndex(index)}
+                              style={{
+                                minHeight: "48px",
+                                outline: index === quickResultIndex
+                                  ? "2px solid rgba(103,232,249,.7)"
+                                  : "none",
+                                background: index === quickResultIndex
+                                  ? "rgba(103,232,249,.10)"
+                                  : undefined,
+                                textAlign: "left",
+                                padding: "10px 12px",
+                              }}
+                            >
+                              <span className="player-name">
+                                {player.name}
+                              </span>
+
+                              <div className="player-info">
+                                <span>{player.club}</span>
+                                <span className="mini-role">
+                                  {player.role}
+                                </span>
+                                <span className="player-price">
+                                  Q {player.quotation ?? "-"}
+                                </span>
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          <p
+                            style={{
+                              margin: "8px",
+                              color: "rgba(255,255,255,.6)",
+                            }}
+                          >
+                            Nessun giocatore disponibile trovato.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                </div>
+              </label>
+
+              <div style={{ display: "grid", gap: "8px", fontSize: "13px", fontWeight: 700, color: "rgba(255,255,255,.72)" }}>
+                <span>2 · Chiamata</span>
+                <button
+                  type="button"
+                  onClick={() => void callSelectedPlayer()}
+                  disabled={!selectedPlayer || isCallingPlayer || isSaving}
+                  style={{ minHeight: "58px", borderRadius: "14px", border: "1px solid rgba(103,232,249,.35)", background: selectedPlayer ? "rgba(103,232,249,.13)" : "rgba(255,255,255,.035)", color: selectedPlayer ? "#dffbff" : "rgba(255,255,255,.3)", fontSize: "15px", fontWeight: 900, cursor: selectedPlayer ? "pointer" : "not-allowed" }}
+                >
+                  {isCallingPlayer ? "..." : calledPlayer?.id === selectedPlayer?.id ? "CHIAMATO" : "CHIAMA"}
+                </button>
+              </div>
+
+              <label
+                style={{
+                  display: "grid",
+                  gap: "8px",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  color: "rgba(255,255,255,.72)",
+                }}
+              >
+                <span>3 · Squadra</span>
+                <select
+                  ref={quickTeamRef}
+                  value={selectedTeamId ?? ""}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      clearSelectedPlayer();
+                    }
+                  }}
+                  onChange={(event) => {
+                    setSelectedTeamId(
+                      event.target.value
+                        ? Number(event.target.value)
+                        : null,
+                    );
+
+                    if (event.target.value) {
+                      window.setTimeout(
+                        () => quickPriceRef.current?.focus(),
+                        0,
+                      );
+                    }
+                  }}
+                  disabled={isSaving || !selectedPlayer || calledPlayer?.id !== selectedPlayer.id}
+                  style={{
+                    width: "100%",
+                    minHeight: "58px",
+                    padding: "0 14px",
+                    borderRadius: "14px",
+                    border: "1px solid rgba(255,255,255,.16)",
+                    background: "rgba(5,7,10,.48)",
+                    color: "#fff",
+                    fontSize: "16px",
+                    fontWeight: 700,
+                    outline: "none",
+                  }}
+                >
+                  <option value="">Seleziona squadra</option>
+                  {teams.map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {team.name} · {calculateCredits(team)} cr
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label
+                style={{
+                  display: "grid",
+                  gap: "8px",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  color: "rgba(255,255,255,.72)",
+                }}
+              >
+                <span>4 · Prezzo</span>
+                <input
+                  ref={quickPriceRef}
+                  type="number"
+                  min="1"
+                  value={price}
+                  onChange={(event) => setPrice(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "Enter" &&
+                      selectedPlayerId &&
+                      selectedTeamId &&
+                      price &&
+                      !isSaving
+                    ) {
+                      event.preventDefault();
+                      void assignPlayer();
+                    }
+                  }}
+                  placeholder="0"
+                  disabled={isSaving}
+                  style={{
+                    width: "100%",
+                    minHeight: "58px",
+                    padding: "0 16px",
+                    borderRadius: "14px",
+                    border: "1px solid rgba(255,255,255,.16)",
+                    background: "rgba(5,7,10,.48)",
+                    color: "#fff",
+                    fontSize: "24px",
+                    fontWeight: 800,
+                    outline: "none",
+                  }}
+                />
+              </label>
+
+              <div
+                style={{
+                  display: "grid",
+                  gap: "8px",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    color: "rgba(255,255,255,.72)",
+                  }}
+                >
+                  4 · Conferma
+                </span>
+
+                <button
+                  type="button"
+                  className="assign-button"
+                  onClick={() => void assignPlayer()}
+                  disabled={
+                    !selectedPlayerId ||
+                    !selectedTeamId ||
+                    !price ||
+                    isSaving
                   }
+                  style={{
+                    minHeight: "58px",
+                    padding: "0 22px",
+                    borderRadius: "14px",
+                    whiteSpace: "nowrap",
+                    fontSize: "16px",
+                    fontWeight: 900,
+                    letterSpacing: ".02em",
+                    boxShadow:
+                      selectedPlayerId && selectedTeamId && price
+                        ? "0 10px 30px rgba(0,0,0,.28)"
+                        : "none",
+                  }}
+                >
+                  {isSaving ? "Salvataggio…" : "ASSEGNA"}
+                </button>
+              </div>
+            </div>
+
+            {selectedPlayer && (
+              <div
+                style={{
+                  marginTop: "16px",
+                  padding: "13px 15px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "16px",
+                  flexWrap: "wrap",
+                  borderRadius: "14px",
+                  border: "1px solid rgba(103,232,249,.15)",
+                  background: "rgba(103,232,249,.045)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    minWidth: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "42px",
+                      height: "42px",
+                      display: "grid",
+                      placeItems: "center",
+                      borderRadius: "12px",
+                      border: "1px solid rgba(255,255,255,.12)",
+                      background: "rgba(255,255,255,.06)",
+                      fontSize: "17px",
+                      fontWeight: 900,
+                    }}
+                  >
+                    {selectedPlayer.role}
+                  </div>
+
+                  <div style={{ minWidth: 0 }}>
+                    <strong
+                      style={{
+                        display: "block",
+                        fontSize: "17px",
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {selectedPlayer.name}
+                    </strong>
+                    <span
+                      style={{
+                        display: "block",
+                        marginTop: "3px",
+                        color: "rgba(255,255,255,.56)",
+                        fontSize: "13px",
+                      }}
+                    >
+                      {selectedPlayer.club} · Quotazione {selectedPlayer.quotation ?? "-"}
+                    </span>
+                  </div>
                 </div>
 
-                <h2>
-                  {
-                    lastPurchase
-                      .player.name
-                  }
-                </h2>
-
-                <p className="current-club">
-                  {
-                    lastPurchase
-                      .player.club
-                  }
-
-                  {" · "}
-
-                  {
-                    lastPurchase
-                      .teamName
-                  }
-
-                  {lastPurchase
-                    .player
-                    .quotation !=
-                    null &&
-                    ` · Q ${lastPurchase.player.quotation}`}
-                </p>
-              </>
-            ) : (
-              <>
-                <h2>
-                  Nessun giocatore
-                  assegnato
-                </h2>
-
-                <p className="current-club">
-                  Usa il pannello
-                  Admin per
-                  registrare il
-                  primo acquisto.
-                </p>
-              </>
+                {selectedTeam && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "18px",
+                      alignItems: "center",
+                      color: "rgba(255,255,255,.62)",
+                      fontSize: "12px",
+                      textTransform: "uppercase",
+                      letterSpacing: ".05em",
+                    }}
+                  >
+                    <span>
+                      Crediti <strong style={{ color: "#fff" }}>{calculateCredits(selectedTeam)}</strong>
+                    </span>
+                    <span>
+                      Max <strong style={{ color: "#fff" }}>{calculateMaxBid(selectedTeam, leagueSettings.roleLimits)}</strong>
+                    </span>
+                  </div>
+                )}
+              </div>
             )}
+          </section>
+        )}
+
+        <section
+          style={{
+            margin: "0 0 14px",
+            minHeight: "96px",
+            borderRadius: "16px",
+            border: calledPlayer ? "1px solid rgba(103,232,249,.28)" : "1px solid rgba(255,255,255,.08)",
+            background: calledPlayer ? "rgba(103,232,249,.055)" : "rgba(255,255,255,.025)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            textAlign: "center",
+            padding: "14px 20px",
+          }}
+        >
+          {calledPlayer ? (
+            <div>
+              <div style={{ color: "#67e8f9", fontSize: "11px", fontWeight: 850, letterSpacing: ".15em", textTransform: "uppercase" }}>Giocatore all'asta</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", flexWrap: "wrap", marginTop: "5px" }}>
+                <span style={{ fontSize: "clamp(28px,3vw,48px)", lineHeight: 1, fontWeight: 950, letterSpacing: "-.04em" }}>
+                  {calledPlayer.name} <span style={{ color: "rgba(255,255,255,.48)", fontWeight: 700 }}>({calledPlayer.club})</span>
+                </span>
+                <span
+                  className={`role-badge role-${calledPlayer.role.toLowerCase()}`}
+                  style={{
+                    fontSize: "clamp(22px,1.8vw,30px)",
+                    width: "clamp(48px,3.2vw,58px)",
+                    height: "clamp(48px,3.2vw,58px)",
+                    flex: "0 0 auto",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: "12px",
+                    border: "1px solid rgba(255,255,255,.22)",
+                    boxShadow: "0 8px 22px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.14)",
+                    fontWeight: 950,
+                    lineHeight: 1,
+                  }}
+                >
+                  {calledPlayer.role}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div style={{ color: "rgba(255,255,255,.3)", fontWeight: 750 }}>Nessun giocatore chiamato</div>
+          )}
+        </section>
+
+        <section
+          className="current-player-panel"
+          style={{
+            display: "block",
+            padding: "18px 20px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "16px",
+              marginBottom:
+                recentPurchases.length > 0
+                  ? "12px"
+                  : 0,
+            }}
+          >
+            <div>
+              <p
+                className="current-label"
+                style={{
+                  marginBottom: "3px",
+                }}
+              >
+                Cronologia asta
+              </p>
+
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: "20px",
+                }}
+              >
+                Ultimi acquisti
+              </h2>
+            </div>
+
+            <span
+              style={{
+                color: "rgba(255,255,255,.46)",
+                fontSize: "12px",
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {recentPurchases.length}/5
+            </span>
           </div>
 
-          {lastPurchase && (
-            <div className="current-price">
-              <strong>
-                {
-                  lastPurchase
-                    .player.price
-                }
-              </strong>
+          {recentPurchases.length > 0 ? (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(190px, 1fr))",
+                gap: "8px",
+              }}
+            >
+              {recentPurchases.map(
+                (item, index) => {
+                  const content = (
+                    <>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "8px",
+                          marginBottom: "6px",
+                        }}
+                      >
+                        <span
+                          className={`role-badge role-${item.player.role.toLowerCase()}`}
+                          style={{
+                            minWidth: "28px",
+                            textAlign: "center",
+                          }}
+                        >
+                          {item.player.role}
+                        </span>
 
-              <span>
-                crediti
-              </span>
+                        <strong
+                          style={{
+                            fontSize: index === 0
+                              ? "18px"
+                              : "16px",
+                            color: "#fff",
+                          }}
+                        >
+                          <span className="coin">C</span> {item.player.price}
+                        </strong>
+                      </div>
+
+                      <div
+                        style={{
+                          fontWeight: 800,
+                          fontSize: index === 0
+                            ? "15px"
+                            : "14px",
+                          color: "#fff",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                        title={item.player.name}
+                      >
+                        {item.player.name} <span style={{ color: "rgba(255,255,255,.48)", fontWeight: 650 }}>({item.player.club})</span>
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: "2px",
+                          color: "rgba(255,255,255,.58)",
+                          fontSize: "12px",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                        title={`${item.teamName} · ${item.player.club}`}
+                      >
+                        {item.teamName}
+                      </div>
+                    </>
+                  );
+
+                  const commonStyle = {
+                    width: "100%",
+                    minWidth: 0,
+                    padding: index === 0
+                      ? "13px 14px"
+                      : "11px 12px",
+                    borderRadius: "12px",
+                    border: index === 0
+                      ? "1px solid rgba(255,255,255,.20)"
+                      : "1px solid rgba(255,255,255,.09)",
+                    background: index === 0
+                      ? "rgba(255,255,255,.075)"
+                      : "rgba(255,255,255,.035)",
+                    textAlign: "left" as const,
+                  };
+
+                  return session ? (
+                    <button
+                      key={item.purchaseId}
+                      type="button"
+                      onClick={() =>
+                        openEditPurchase(
+                          item.player,
+                          item.teamId,
+                        )
+                      }
+                      title="Modifica acquisto"
+                      style={{
+                        ...commonStyle,
+                        cursor: "pointer",
+                        color: "inherit",
+                      }}
+                    >
+                      {content}
+                    </button>
+                  ) : (
+                    <div
+                      key={item.purchaseId}
+                      style={commonStyle}
+                    >
+                      {content}
+                    </div>
+                  );
+                },
+              )}
             </div>
+          ) : (
+            <p
+              className="current-club"
+              style={{
+                margin: 0,
+              }}
+            >
+              Nessun acquisto registrato.
+            </p>
           )}
         </section>
 
@@ -2028,10 +3321,8 @@ function App() {
                       <div className="team-name-row">
                         <span className="status-dot" />
 
-                        <h2>
-                          {
-                            team.name
-                          }
+                        <h2 style={{ fontSize: "20px" }}>
+                          {team.name}
                         </h2>
                       </div>
 

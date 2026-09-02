@@ -166,7 +166,7 @@ function normalizeSearch(
 
 function App() {
   const isTvMode =
-    window.location.pathname.replace(/\/+$/, "") === "/tv";
+    new URLSearchParams(window.location.search).get("tv") === "1";
 
   const [teams, setTeams] =
     useState<Team[]>([]);
@@ -2432,7 +2432,7 @@ function App() {
             className="secondary-button"
             onClick={() =>
               window.open(
-                `${window.location.origin}/tv`,
+                `${window.location.origin}/?tv=1`,
                 "_blank",
                 "noopener,noreferrer",
               )

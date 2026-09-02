@@ -1,0 +1,402 @@
+.app {
+  width: min(1500px, calc(100% - 40px));
+  margin: 0 auto;
+  padding-bottom: 80px;
+}
+
+.topbar {
+  min-height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 5px;
+  color: #7c8599;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: clamp(30px, 4vw, 46px);
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 10px;
+}
+
+button {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.primary-button,
+.ghost-button {
+  padding: 13px 18px;
+  border-radius: 13px;
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.primary-button {
+  background: #f6f7fb;
+  color: #101115;
+}
+
+.ghost-button {
+  background: #1b1e25;
+  color: #dfe3ea;
+  border: 1px solid #292d36;
+}
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: 34px;
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 85% 0%, rgba(93, 234, 156, 0.18), transparent 32%),
+    linear-gradient(145deg, #191c22, #111317);
+  border: 1px solid #242832;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+
+.hero-label {
+  margin-bottom: 30px;
+  color: #8992a5;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.hero-content {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.role-badge,
+.small-role {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: #59e698;
+  color: #07160d;
+  font-weight: 900;
+}
+
+.role-badge {
+  width: 38px;
+  height: 38px;
+  margin-bottom: 17px;
+}
+
+.hero h2 {
+  margin: 0;
+  max-width: 800px;
+  font-size: clamp(42px, 7vw, 88px);
+  line-height: 0.92;
+  letter-spacing: -0.07em;
+}
+
+.hero-team {
+  margin: 17px 0 0;
+  color: #a6aec0;
+  font-size: 18px;
+}
+
+.hero-price {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.hero-price span {
+  font-size: clamp(60px, 8vw, 100px);
+  line-height: 0.85;
+  font-weight: 900;
+  letter-spacing: -0.07em;
+}
+
+.hero-price small {
+  margin-top: 10px;
+  color: #8992a5;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.section-header {
+  margin: 52px 0 20px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.section-header h3 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: -0.035em;
+}
+
+.league-info {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.league-info span {
+  padding: 8px 11px;
+  border-radius: 999px;
+  background: #191c22;
+  border: 1px solid #282c35;
+  color: #929bad;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.teams-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.team-card {
+  padding: 19px;
+  border-radius: 19px;
+  background: #16191f;
+  border: 1px solid #252932;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.team-card:hover {
+  transform: translateY(-3px);
+  border-color: #3a404d;
+  background: #191d24;
+}
+
+.team-card-header {
+  min-height: 70px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.team-card h4 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+}
+
+.team-card-header p {
+  margin: 8px 0 0;
+  color: #71798a;
+  font-size: 12px;
+}
+
+.credits {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.credits strong {
+  font-size: 25px;
+  letter-spacing: -0.04em;
+}
+
+.credits span {
+  color: #7c8596;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.roles {
+  margin: 20px 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  overflow: hidden;
+  border-radius: 11px;
+  border: 1px solid #292d36;
+}
+
+.role-row {
+  padding: 10px 5px;
+  text-align: center;
+  border-right: 1px solid #292d36;
+}
+
+.role-row:last-child {
+  border-right: 0;
+}
+
+.role-row span,
+.role-row strong {
+  display: block;
+}
+
+.role-row span {
+  margin-bottom: 4px;
+  color: #657084;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.role-row strong {
+  font-size: 13px;
+}
+
+.team-button {
+  width: 100%;
+  padding: 11px;
+  border-radius: 10px;
+  background: #20242c;
+  color: #cbd1dc;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.team-button:hover {
+  background: #2a2f39;
+}
+
+.recent-section {
+  margin-top: 10px;
+}
+
+.purchase-list {
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid #252932;
+  background: #15181e;
+}
+
+.purchase-row {
+  min-height: 68px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #252932;
+}
+
+.purchase-row:last-child {
+  border-bottom: 0;
+}
+
+.purchase-player {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.small-role {
+  width: 30px;
+  height: 30px;
+  font-size: 12px;
+}
+
+.purchase-player strong,
+.purchase-player span {
+  display: block;
+}
+
+.purchase-player strong {
+  font-size: 14px;
+}
+
+.purchase-player span {
+  margin-top: 4px;
+  color: #747d8f;
+  font-size: 12px;
+}
+
+.purchase-price {
+  font-size: 19px;
+  font-weight: 850;
+}
+
+.purchase-price span {
+  color: #737c8e;
+  font-size: 11px;
+}
+
+@media (max-width: 1150px) {
+  .teams-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .app {
+    width: min(100% - 24px, 1500px);
+  }
+
+  .topbar {
+    min-height: 90px;
+  }
+
+  .ghost-button {
+    display: none;
+  }
+
+  .hero {
+    padding: 25px;
+  }
+
+  .hero-content {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .hero-price {
+    align-items: flex-start;
+    margin-top: 10px;
+  }
+
+  .teams-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .section-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .league-info {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 500px) {
+  .teams-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero h2 {
+    font-size: 48px;
+  }
+
+  .hero-price span {
+    font-size: 62px;
+  }
+}

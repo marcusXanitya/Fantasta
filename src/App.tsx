@@ -301,14 +301,6 @@ function App() {
     setIsSavingLeague,
   ] = useState(false);
 
-  const [
-    lastPurchase,
-    setLastPurchase,
-  ] = useState<{
-    player: Player;
-    teamName: string;
-  } | null>(null);
-
   const loadAuctionData =
     useCallback(
       async () => {
@@ -471,41 +463,29 @@ function App() {
                     team.id,
                 );
 
-              const teamPlayers =
-                teamPurchases
-                  .map(
-                    (
-                      purchase,
-                    ) => {
-                      const player =
-                        mappedPlayers.find(
-                          (
-                            candidate,
-                          ) =>
-                            candidate.id ===
-                            purchase.player_id,
-                        );
+              const teamPlayers: Player[] =
+                teamPurchases.flatMap(
+                  (purchase) => {
+                    const player =
+                      mappedPlayers.find(
+                        (candidate) =>
+                          candidate.id ===
+                          purchase.player_id,
+                      );
 
-                      if (
-                        !player
-                      ) {
-                        return null;
-                      }
+                    if (!player) {
+                      return [];
+                    }
 
-                      return {
+                    return [
+                      {
                         ...player,
                         price:
                           purchase.price,
-                      };
-                    },
-                  )
-                  .filter(
-                    (
-                      player,
-                    ): player is Player =>
-                      player !==
-                      null,
-                  );
+                      },
+                    ];
+                  },
+                );
 
               return {
                 id: team.id,
@@ -535,62 +515,7 @@ function App() {
           mappedTeams,
         );
 
-        const latestPurchase =
-          databasePurchases.length >
-          0
-            ? databasePurchases[
-                databasePurchases.length -
-                  1
-              ]
-            : null;
 
-        if (
-          latestPurchase
-        ) {
-          const player =
-            mappedPlayers.find(
-              (
-                candidate,
-              ) =>
-                candidate.id ===
-                latestPurchase.player_id,
-            );
-
-          const team =
-            mappedTeams.find(
-              (
-                candidate,
-              ) =>
-                candidate.id ===
-                latestPurchase.team_id,
-            );
-
-          if (
-            player &&
-            team
-          ) {
-            setLastPurchase(
-              {
-                player: {
-                  ...player,
-                  price:
-                    latestPurchase.price,
-                },
-
-                teamName:
-                  team.name,
-              },
-            );
-          } else {
-            setLastPurchase(
-              null,
-            );
-          }
-        } else {
-          setLastPurchase(
-            null,
-          );
-        }
 
         setIsLoading(
           false,
@@ -788,14 +713,7 @@ function App() {
     window.setTimeout(() => quickTeamRef.current?.focus(), 0);
   }
 
-  async function clearCalledPlayer() {
-    if (!session) return;
-    const { error } = await supabase
-      .from("auction_state")
-      .update({ called_player_id: null, called_at: null })
-      .eq("id", 1);
-    if (!error) setCalledPlayerId(null);
-  }
+
 
   const selectedTeam =
     teams.find(
@@ -1932,7 +1850,6 @@ function App() {
 
     setPlayerSearch("");
     setPrice("");
-    setLastPurchase(null);
 
     await loadAuctionData();
 

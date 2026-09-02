@@ -1,5 +1,10 @@
 export type Role = "P" | "D" | "C" | "A";
 
+export type RoleLimits = Record<
+  Role,
+  number
+>;
+
 export type Player = {
   id: number;
   name: string;
@@ -14,11 +19,4 @@ export type Team = {
   name: string;
   startingCredits: number;
   players: Player[];
-};
-
-export const roleLimits: Record<Role, number> = {
-  P: 3,
-  D: 8,
-  C: 8,
-  A: 6,
 };

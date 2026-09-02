@@ -7,10 +7,12 @@ import {
 
 import "./App.css";
 
+import type { Session } from "@supabase/supabase-js";
+
 import {
-  roleLimits,
   type Player,
   type Role,
+  type RoleLimits,
   type Team,
 } from "./data";
 
@@ -19,10 +21,18 @@ import ListoneImport from "./ListoneImport";
 
 const roles: Role[] = ["P", "D", "C", "A"];
 
+const defaultRoleLimits: RoleLimits = {
+  P: 3,
+  D: 8,
+  C: 8,
+  A: 6,
+};
+
 type DatabaseTeam = {
   id: number;
   name: string;
   starting_credits: number;
+  sort_order: number | null;
 };
 
 type DatabasePlayer = {
@@ -41,6 +51,20 @@ type DatabasePurchase = {
   created_at: string;
 };
 
+type DatabaseLeagueSettings = {
+  id: number;
+  league_name: string;
+  goalkeeper_slots: number;
+  defender_slots: number;
+  midfielder_slots: number;
+  forward_slots: number;
+};
+
+type LeagueSettings = {
+  leagueName: string;
+  roleLimits: RoleLimits;
+};
+
 type EditingPurchase = {
   playerId: number;
   currentTeamId: number;
@@ -48,28 +72,63 @@ type EditingPurchase = {
   price: string;
 };
 
+type DraftTeam = {
+  id?: number;
+  name: string;
+  startingCredits: string;
+};
+
+type LeagueDraft = {
+  leagueName: string;
+  goalkeeperSlots: string;
+  defenderSlots: string;
+  midfielderSlots: string;
+  forwardSlots: string;
+  teams: DraftTeam[];
+};
+
 function calculateSpent(team: Team) {
-  return team.players.reduce((total, player) => {
-    return total + (player.price ?? 0);
-  }, 0);
+  return team.players.reduce(
+    (total, player) =>
+      total + (player.price ?? 0),
+    0,
+  );
 }
 
 function calculateCredits(team: Team) {
-  return team.startingCredits - calculateSpent(team);
+  return (
+    team.startingCredits -
+    calculateSpent(team)
+  );
 }
 
-function calculateMaxBid(team: Team) {
-  const credits = calculateCredits(team);
-
-  const totalSlots = Object.values(
+function calculateTotalSlots(
+  roleLimits: RoleLimits,
+) {
+  return Object.values(
     roleLimits,
   ).reduce(
-    (total, limit) => total + limit,
+    (total, limit) =>
+      total + limit,
     0,
   );
+}
+
+function calculateMaxBid(
+  team: Team,
+  roleLimits: RoleLimits,
+) {
+  const credits =
+    calculateCredits(team);
+
+  const totalSlots =
+    calculateTotalSlots(
+      roleLimits,
+    );
 
   const missingPlayers =
-    totalSlots - team.players.length;
+    totalSlots -
+    team.players.length;
 
   if (missingPlayers <= 0) {
     return 0;
@@ -77,7 +136,8 @@ function calculateMaxBid(team: Team) {
 
   return Math.max(
     0,
-    credits - (missingPlayers - 1),
+    credits -
+      (missingPlayers - 1),
   );
 }
 
@@ -86,35 +146,111 @@ function getRolePlayers(
   role: Role,
 ) {
   return team.players.filter(
-    (player) => player.role === role,
+    (player) =>
+      player.role === role,
   );
 }
 
-function normalizeSearch(value: string) {
+function normalizeSearch(
+  value: string,
+) {
   return value
     .toLocaleLowerCase("it")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+    .replace(
+      /[\u0300-\u036f]/g,
+      "",
+    );
 }
 
 function App() {
   const [teams, setTeams] =
     useState<Team[]>([]);
 
-  const [allPlayers, setAllPlayers] =
-    useState<Player[]>([]);
+  const [
+    allPlayers,
+    setAllPlayers,
+  ] = useState<Player[]>([]);
 
-  const [purchases, setPurchases] =
-    useState<DatabasePurchase[]>([]);
+  const [
+    purchases,
+    setPurchases,
+  ] =
+    useState<
+      DatabasePurchase[]
+    >([]);
 
-  const [isLoading, setIsLoading] =
-    useState(true);
+  const [
+    leagueSettings,
+    setLeagueSettings,
+  ] =
+    useState<LeagueSettings>({
+      leagueName: "FantAsta",
+      roleLimits:
+        defaultRoleLimits,
+    });
 
-  const [loadError, setLoadError] =
-    useState("");
+  const [
+    leagueDraft,
+    setLeagueDraft,
+  ] = useState<LeagueDraft>({
+    leagueName: "FantAsta",
+    goalkeeperSlots: "3",
+    defenderSlots: "8",
+    midfielderSlots: "8",
+    forwardSlots: "6",
+    teams: [],
+  });
 
-  const [isAdminOpen, setIsAdminOpen] =
-    useState(false);
+  const [
+    isLoading,
+    setIsLoading,
+  ] = useState(true);
+
+  const [
+    loadError,
+    setLoadError,
+  ] = useState("");
+
+  const [
+    isAdminOpen,
+    setIsAdminOpen,
+  ] = useState(false);
+
+  const [
+    session,
+    setSession,
+  ] = useState<Session | null>(null);
+
+  const [
+    isAuthLoading,
+    setIsAuthLoading,
+  ] = useState(true);
+
+  const [
+    isLoginOpen,
+    setIsLoginOpen,
+  ] = useState(false);
+
+  const [
+    loginEmail,
+    setLoginEmail,
+  ] = useState("");
+
+  const [
+    loginPassword,
+    setLoginPassword,
+  ] = useState("");
+
+  const [
+    loginError,
+    setLoginError,
+  ] = useState("");
+
+  const [
+    isLoggingIn,
+    setIsLoggingIn,
+  ] = useState(false);
 
   const [
     playerSearch,
@@ -124,12 +260,18 @@ function App() {
   const [
     selectedPlayerId,
     setSelectedPlayerId,
-  ] = useState<number | null>(null);
+  ] =
+    useState<number | null>(
+      null,
+    );
 
   const [
     selectedTeamId,
     setSelectedTeamId,
-  ] = useState<number | null>(null);
+  ] =
+    useState<number | null>(
+      null,
+    );
 
   const [price, setPrice] =
     useState("");
@@ -138,12 +280,19 @@ function App() {
     editingPurchase,
     setEditingPurchase,
   ] =
-    useState<EditingPurchase | null>(
-      null,
-    );
+    useState<
+      EditingPurchase | null
+    >(null);
 
-  const [isSaving, setIsSaving] =
-    useState(false);
+  const [
+    isSaving,
+    setIsSaving,
+  ] = useState(false);
+
+  const [
+    isSavingLeague,
+    setIsSavingLeague,
+  ] = useState(false);
 
   const [
     lastPurchase,
@@ -154,212 +303,378 @@ function App() {
   } | null>(null);
 
   const loadAuctionData =
-    useCallback(async () => {
-      setIsLoading(true);
-      setLoadError("");
+    useCallback(
+      async () => {
+        setIsLoading(true);
+        setLoadError("");
 
-      const [
-        {
-          data: teamsData,
-          error: teamsError,
-        },
-        {
-          data: playersData,
-          error: playersError,
-        },
-        {
-          data: purchasesData,
-          error: purchasesError,
-        },
-      ] = await Promise.all([
-        supabase
-          .from("teams")
-          .select("*")
-          .order("id"),
-
-        supabase
-          .from("players")
-          .select("*")
-          .order("name"),
-
-        supabase
-          .from("purchases")
-          .select("*")
-          .order("created_at", {
-            ascending: true,
-          }),
-      ]);
-
-      if (
-        teamsError ||
-        playersError ||
-        purchasesError
-      ) {
-        console.error(
-          "Errore caricamento Supabase:",
+        const [
           {
-            teamsError,
-            playersError,
-            purchasesError,
+            data: teamsData,
+            error: teamsError,
           },
-        );
+          {
+            data: playersData,
+            error:
+              playersError,
+          },
+          {
+            data:
+              purchasesData,
+            error:
+              purchasesError,
+          },
+          {
+            data:
+              settingsData,
+            error:
+              settingsError,
+          },
+        ] =
+          await Promise.all([
+            supabase
+              .from("teams")
+              .select("*")
+              .order(
+                "sort_order",
+                {
+                  ascending: true,
+                  nullsFirst:
+                    false,
+                },
+              )
+              .order("id"),
 
-        setLoadError(
-          "Impossibile caricare i dati dell'asta.",
-        );
+            supabase
+              .from("players")
+              .select("*")
+              .order("name"),
 
-        setIsLoading(false);
+            supabase
+              .from(
+                "purchases",
+              )
+              .select("*")
+              .order(
+                "created_at",
+                {
+                  ascending: true,
+                },
+              ),
 
-        return;
-      }
+            supabase
+              .from(
+                "league_settings",
+              )
+              .select("*")
+              .eq("id", 1)
+              .maybeSingle(),
+          ]);
 
-      const databaseTeams =
-        (teamsData ??
-          []) as DatabaseTeam[];
+        if (
+          teamsError ||
+          playersError ||
+          purchasesError ||
+          settingsError
+        ) {
+          console.error(
+            "Errore caricamento Supabase:",
+            {
+              teamsError,
+              playersError,
+              purchasesError,
+              settingsError,
+            },
+          );
 
-      const databasePlayers =
-        (playersData ??
-          []) as DatabasePlayer[];
+          setLoadError(
+            "Impossibile caricare i dati dell'asta.",
+          );
 
-      const databasePurchases =
-        (purchasesData ??
-          []) as DatabasePurchase[];
+          setIsLoading(
+            false,
+          );
 
-      const mappedPlayers: Player[] =
-        databasePlayers.map(
-          (player) => ({
-            id: player.id,
-            name: player.name,
-            role: player.role,
-            club: player.club,
-            quotation:
-              player.quotation,
-          }),
-        );
+          return;
+        }
 
-      const mappedTeams: Team[] =
-        databaseTeams.map((team) => {
-          const teamPurchases =
-            databasePurchases.filter(
-              (purchase) =>
-                purchase.team_id ===
-                team.id,
-            );
+        const databaseTeams =
+          (teamsData ??
+            []) as DatabaseTeam[];
 
-          const teamPlayers =
-            teamPurchases
-              .map((purchase) => {
-                const player =
-                  mappedPlayers.find(
-                    (candidate) =>
-                      candidate.id ===
-                      purchase.player_id,
+        const databasePlayers =
+          (playersData ??
+            []) as DatabasePlayer[];
+
+        const databasePurchases =
+          (purchasesData ??
+            []) as DatabasePurchase[];
+
+        const databaseSettings =
+          settingsData as DatabaseLeagueSettings | null;
+
+        const newRoleLimits: RoleLimits =
+          databaseSettings
+            ? {
+                P:
+                  databaseSettings.goalkeeper_slots,
+                D:
+                  databaseSettings.defender_slots,
+                C:
+                  databaseSettings.midfielder_slots,
+                A:
+                  databaseSettings.forward_slots,
+              }
+            : defaultRoleLimits;
+
+        const newLeagueSettings: LeagueSettings =
+          {
+            leagueName:
+              databaseSettings?.league_name ??
+              "FantAsta",
+
+            roleLimits:
+              newRoleLimits,
+          };
+
+        const mappedPlayers: Player[] =
+          databasePlayers.map(
+            (player) => ({
+              id: player.id,
+              name:
+                player.name,
+              role:
+                player.role,
+              club:
+                player.club,
+              quotation:
+                player.quotation,
+            }),
+          );
+
+        const mappedTeams: Team[] =
+          databaseTeams.map(
+            (team) => {
+              const teamPurchases =
+                databasePurchases.filter(
+                  (
+                    purchase,
+                  ) =>
+                    purchase.team_id ===
+                    team.id,
+                );
+
+              const teamPlayers =
+                teamPurchases
+                  .map(
+                    (
+                      purchase,
+                    ) => {
+                      const player =
+                        mappedPlayers.find(
+                          (
+                            candidate,
+                          ) =>
+                            candidate.id ===
+                            purchase.player_id,
+                        );
+
+                      if (
+                        !player
+                      ) {
+                        return null;
+                      }
+
+                      return {
+                        ...player,
+                        price:
+                          purchase.price,
+                      };
+                    },
+                  )
+                  .filter(
+                    (
+                      player,
+                    ): player is Player =>
+                      player !==
+                      null,
                   );
 
-                if (!player) {
-                  return null;
-                }
+              return {
+                id: team.id,
+                name:
+                  team.name,
+                startingCredits:
+                  team.starting_credits,
+                players:
+                  teamPlayers,
+              };
+            },
+          );
 
-                return {
+        setLeagueSettings(
+          newLeagueSettings,
+        );
+
+        setAllPlayers(
+          mappedPlayers,
+        );
+
+        setPurchases(
+          databasePurchases,
+        );
+
+        setTeams(
+          mappedTeams,
+        );
+
+        const latestPurchase =
+          databasePurchases.length >
+          0
+            ? databasePurchases[
+                databasePurchases.length -
+                  1
+              ]
+            : null;
+
+        if (
+          latestPurchase
+        ) {
+          const player =
+            mappedPlayers.find(
+              (
+                candidate,
+              ) =>
+                candidate.id ===
+                latestPurchase.player_id,
+            );
+
+          const team =
+            mappedTeams.find(
+              (
+                candidate,
+              ) =>
+                candidate.id ===
+                latestPurchase.team_id,
+            );
+
+          if (
+            player &&
+            team
+          ) {
+            setLastPurchase(
+              {
+                player: {
                   ...player,
                   price:
-                    purchase.price,
-                };
-              })
-              .filter(
-                (
-                  player,
-                ): player is Player =>
-                  player !== null,
-              );
+                    latestPurchase.price,
+                },
 
-          return {
-            id: team.id,
-            name: team.name,
-            startingCredits:
-              team.starting_credits,
-            players: teamPlayers,
-          };
-        });
-
-      setAllPlayers(mappedPlayers);
-      setPurchases(
-        databasePurchases,
-      );
-      setTeams(mappedTeams);
-
-      const latestPurchase =
-        databasePurchases.length > 0
-          ? databasePurchases[
-              databasePurchases.length -
-                1
-            ]
-          : null;
-
-      if (latestPurchase) {
-        const player =
-          mappedPlayers.find(
-            (candidate) =>
-              candidate.id ===
-              latestPurchase.player_id,
-          );
-
-        const team =
-          mappedTeams.find(
-            (candidate) =>
-              candidate.id ===
-              latestPurchase.team_id,
-          );
-
-        if (player && team) {
-          setLastPurchase({
-            player: {
-              ...player,
-              price:
-                latestPurchase.price,
-            },
-
-            teamName: team.name,
-          });
+                teamName:
+                  team.name,
+              },
+            );
+          } else {
+            setLastPurchase(
+              null,
+            );
+          }
         } else {
-          setLastPurchase(null);
+          setLastPurchase(
+            null,
+          );
         }
-      } else {
-        setLastPurchase(null);
-      }
 
-      setIsLoading(false);
-    }, []);
+        setIsLoading(
+          false,
+        );
+      },
+      [],
+    );
+
+  useEffect(() => {
+    let mounted = true;
+
+    void supabase.auth
+      .getSession()
+      .then(({ data, error }) => {
+        if (!mounted) {
+          return;
+        }
+
+        if (error) {
+          console.error(
+            "Errore lettura sessione:",
+            error,
+          );
+        }
+
+        setSession(
+          data.session ?? null,
+        );
+
+        setIsAuthLoading(false);
+      });
+
+    const {
+      data: authListener,
+    } =
+      supabase.auth.onAuthStateChange(
+        (_event, nextSession) => {
+          setSession(
+            nextSession,
+          );
+
+          setIsAuthLoading(false);
+
+          if (!nextSession) {
+            setIsAdminOpen(
+              false,
+            );
+
+            setEditingPurchase(
+              null,
+            );
+          }
+        },
+      );
+
+    return () => {
+      mounted = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     void loadAuctionData();
 
-    const channel = supabase
-      .channel(
-        "fantasta-purchases",
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "purchases",
-        },
-        (payload) => {
-          console.log(
-            "Realtime event ricevuto:",
-            payload,
-          );
-
-          void loadAuctionData();
-        },
-      )
-      .subscribe((status) => {
-        console.log(
-          "Realtime status:",
-          status,
+    const channel =
+      supabase
+        .channel(
+          "fantasta-auction",
+        )
+        .on(
+          "broadcast",
+          {
+            event:
+              "auction-change",
+          },
+          (payload) => {
+            console.log(
+              "Realtime broadcast ricevuto:",
+              payload,
+            );
+            void loadAuctionData();
+          },
+        )
+        .subscribe(
+          (status) => {
+            console.log(
+              "Realtime status:",
+              status,
+            );
+          },
         );
-      });
 
     return () => {
       void supabase.removeChannel(
@@ -403,16 +718,18 @@ function App() {
       }
 
       return remainingPlayers
-        .filter((player) => {
-          const searchable =
-            normalizeSearch(
-              `${player.name} ${player.club} ${player.role}`,
-            );
+        .filter(
+          (player) => {
+            const searchable =
+              normalizeSearch(
+                `${player.name} ${player.club} ${player.role}`,
+              );
 
-          return searchable.includes(
-            query,
-          );
-        })
+            return searchable.includes(
+              query,
+            );
+          },
+        )
         .slice(0, 8);
     }, [
       playerSearch,
@@ -442,6 +759,49 @@ function App() {
         ) ?? null
       : null;
 
+  function buildLeagueDraft() {
+    setLeagueDraft({
+      leagueName:
+        leagueSettings.leagueName,
+
+      goalkeeperSlots:
+        String(
+          leagueSettings
+            .roleLimits.P,
+        ),
+
+      defenderSlots:
+        String(
+          leagueSettings
+            .roleLimits.D,
+        ),
+
+      midfielderSlots:
+        String(
+          leagueSettings
+            .roleLimits.C,
+        ),
+
+      forwardSlots:
+        String(
+          leagueSettings
+            .roleLimits.A,
+        ),
+
+      teams: teams.map(
+        (team) => ({
+          id: team.id,
+          name:
+            team.name,
+          startingCredits:
+            String(
+              team.startingCredits,
+            ),
+        }),
+      ),
+    });
+  }
+
   function selectPlayer(
     player: Player,
   ) {
@@ -455,16 +815,541 @@ function App() {
   }
 
   function clearSelectedPlayer() {
-    setSelectedPlayerId(null);
+    setSelectedPlayerId(
+      null,
+    );
+
     setPlayerSearch("");
   }
 
   function openAdmin() {
+    if (!session) {
+      setLoginError("");
+      setLoginPassword("");
+      setIsLoginOpen(true);
+      return;
+    }
+
     setPlayerSearch("");
-    setSelectedPlayerId(null);
-    setSelectedTeamId(null);
+    setSelectedPlayerId(
+      null,
+    );
+    setSelectedTeamId(
+      null,
+    );
     setPrice("");
+
+    buildLeagueDraft();
+
     setIsAdminOpen(true);
+  }
+
+  async function loginAdmin() {
+    if (
+      isLoggingIn ||
+      !loginEmail.trim() ||
+      !loginPassword
+    ) {
+      return;
+    }
+
+    setIsLoggingIn(true);
+    setLoginError("");
+
+    const { data, error } =
+      await supabase.auth
+        .signInWithPassword({
+          email:
+            loginEmail.trim(),
+          password:
+            loginPassword,
+        });
+
+    if (error) {
+      console.error(
+        "Errore login Admin:",
+        error,
+      );
+
+      setLoginError(
+        "Email o password non corretti.",
+      );
+
+      setIsLoggingIn(false);
+      return;
+    }
+
+    setSession(
+      data.session,
+    );
+
+    setLoginPassword("");
+    setIsLoginOpen(false);
+    setIsLoggingIn(false);
+
+    setPlayerSearch("");
+    setSelectedPlayerId(
+      null,
+    );
+    setSelectedTeamId(
+      null,
+    );
+    setPrice("");
+
+    buildLeagueDraft();
+
+    setIsAdminOpen(true);
+  }
+
+  async function logoutAdmin() {
+    if (
+      isSaving ||
+      isSavingLeague
+    ) {
+      return;
+    }
+
+    const { error } =
+      await supabase.auth.signOut();
+
+    if (error) {
+      console.error(
+        "Errore logout Admin:",
+        error,
+      );
+
+      alert(
+        "Errore durante il logout.",
+      );
+
+      return;
+    }
+
+    setSession(null);
+    setIsAdminOpen(false);
+    setEditingPurchase(null);
+  }
+
+  function addDraftTeam() {
+    setLeagueDraft(
+      (current) => ({
+        ...current,
+
+        teams: [
+          ...current.teams,
+          {
+            name: `Squadra ${
+              current.teams
+                .length + 1
+            }`,
+
+            startingCredits:
+              current.teams[0]
+                ?.startingCredits ??
+              "500",
+          },
+        ],
+      }),
+    );
+  }
+
+  function removeDraftTeam(
+    index: number,
+  ) {
+    if (
+      leagueDraft.teams
+        .length <= 2
+    ) {
+      alert(
+        "La lega deve avere almeno 2 squadre.",
+      );
+
+      return;
+    }
+
+    setLeagueDraft(
+      (current) => ({
+        ...current,
+
+        teams:
+          current.teams.filter(
+            (_, teamIndex) =>
+              teamIndex !==
+              index,
+          ),
+      }),
+    );
+  }
+
+  function updateDraftTeam(
+    index: number,
+    field:
+      | "name"
+      | "startingCredits",
+    value: string,
+  ) {
+    setLeagueDraft(
+      (current) => ({
+        ...current,
+
+        teams:
+          current.teams.map(
+            (
+              team,
+              teamIndex,
+            ) =>
+              teamIndex ===
+              index
+                ? {
+                    ...team,
+                    [field]:
+                      value,
+                  }
+                : team,
+          ),
+      }),
+    );
+  }
+
+  async function saveLeagueConfiguration() {
+    if (
+      isSavingLeague ||
+      isSaving
+    ) {
+      return;
+    }
+
+    const leagueName =
+      leagueDraft.leagueName.trim();
+
+    const newRoleLimits: RoleLimits =
+      {
+        P: Number(
+          leagueDraft.goalkeeperSlots,
+        ),
+        D: Number(
+          leagueDraft.defenderSlots,
+        ),
+        C: Number(
+          leagueDraft.midfielderSlots,
+        ),
+        A: Number(
+          leagueDraft.forwardSlots,
+        ),
+      };
+
+    if (!leagueName) {
+      alert(
+        "Inserisci un nome per la lega.",
+      );
+
+      return;
+    }
+
+    if (
+      Object.values(
+        newRoleLimits,
+      ).some(
+        (value) =>
+          !Number.isInteger(
+            value,
+          ) || value < 0,
+      )
+    ) {
+      alert(
+        "Gli slot devono essere numeri interi uguali o superiori a 0.",
+      );
+
+      return;
+    }
+
+    const totalSlots =
+      calculateTotalSlots(
+        newRoleLimits,
+      );
+
+    if (
+      totalSlots <= 0
+    ) {
+      alert(
+        "La rosa deve avere almeno uno slot.",
+      );
+
+      return;
+    }
+
+    if (
+      leagueDraft.teams
+        .length < 2
+    ) {
+      alert(
+        "La lega deve avere almeno 2 squadre.",
+      );
+
+      return;
+    }
+
+    const preparedTeams =
+      leagueDraft.teams.map(
+        (team, index) => ({
+          ...team,
+
+          name:
+            team.name.trim(),
+
+          credits: Number(
+            team.startingCredits,
+          ),
+
+          sortOrder:
+            index + 1,
+        }),
+      );
+
+    if (
+      preparedTeams.some(
+        (team) =>
+          !team.name,
+      )
+    ) {
+      alert(
+        "Ogni squadra deve avere un nome.",
+      );
+
+      return;
+    }
+
+    if (
+      preparedTeams.some(
+        (team) =>
+          !Number.isInteger(
+            team.credits,
+          ) ||
+          team.credits <
+            totalSlots,
+      )
+    ) {
+      alert(
+        `Ogni squadra deve avere almeno ${totalSlots} crediti, perché ogni giocatore costa almeno 1 credito.`,
+      );
+
+      return;
+    }
+
+    const normalizedNames =
+      preparedTeams.map(
+        (team) =>
+          normalizeSearch(
+            team.name,
+          ),
+      );
+
+    if (
+      new Set(
+        normalizedNames,
+      ).size !==
+      normalizedNames.length
+    ) {
+      alert(
+        "Due squadre non possono avere lo stesso nome.",
+      );
+
+      return;
+    }
+
+    const draftExistingIds =
+      new Set(
+        preparedTeams
+          .filter(
+            (team) =>
+              team.id != null,
+          )
+          .map(
+            (team) =>
+              team.id as number,
+          ),
+      );
+
+    const teamsToDelete =
+      teams.filter(
+        (team) =>
+          !draftExistingIds.has(
+            team.id,
+          ),
+      );
+
+    const teamsWithPlayersToDelete =
+      teamsToDelete.filter(
+        (team) =>
+          team.players.length >
+          0,
+      );
+
+    if (
+      teamsWithPlayersToDelete
+        .length > 0
+    ) {
+      const confirmed =
+        window.confirm(
+          `Stai eliminando ${teamsWithPlayersToDelete.length} squadre che hanno già giocatori acquistati.\n\nEliminando queste squadre verranno cancellati anche i loro acquisti.\n\nVuoi continuare?`,
+        );
+
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setIsSavingLeague(
+      true,
+    );
+
+    try {
+      const {
+        error:
+          settingsError,
+      } = await supabase
+        .from(
+          "league_settings",
+        )
+        .upsert(
+          {
+            id: 1,
+
+            league_name:
+              leagueName,
+
+            goalkeeper_slots:
+              newRoleLimits.P,
+
+            defender_slots:
+              newRoleLimits.D,
+
+            midfielder_slots:
+              newRoleLimits.C,
+
+            forward_slots:
+              newRoleLimits.A,
+
+            updated_at:
+              new Date().toISOString(),
+          },
+          {
+            onConflict: "id",
+          },
+        );
+
+      if (settingsError) {
+        throw settingsError;
+      }
+
+      for (
+        let index = 0;
+        index <
+        preparedTeams.length;
+        index += 1
+      ) {
+        const team =
+          preparedTeams[index];
+
+        if (
+          team.id != null
+        ) {
+          const {
+            error:
+              updateError,
+          } = await supabase
+            .from("teams")
+            .update({
+              name:
+                team.name,
+
+              starting_credits:
+                team.credits,
+
+              sort_order:
+                team.sortOrder,
+            })
+            .eq(
+              "id",
+              team.id,
+            );
+
+          if (
+            updateError
+          ) {
+            throw updateError;
+          }
+        } else {
+          const {
+            error:
+              insertError,
+          } = await supabase
+            .from("teams")
+            .insert({
+              name:
+                team.name,
+
+              starting_credits:
+                team.credits,
+
+              sort_order:
+                team.sortOrder,
+            });
+
+          if (
+            insertError
+          ) {
+            throw insertError;
+          }
+        }
+      }
+
+      if (
+        teamsToDelete.length >
+        0
+      ) {
+        const {
+          error:
+            deleteError,
+        } = await supabase
+          .from("teams")
+          .delete()
+          .in(
+            "id",
+            teamsToDelete.map(
+              (team) =>
+                team.id,
+            ),
+          );
+
+        if (
+          deleteError
+        ) {
+          throw deleteError;
+        }
+      }
+
+      await loadAuctionData();
+
+      alert(
+        "Configurazione lega salvata.",
+      );
+    } catch (
+      caughtError
+    ) {
+      console.error(
+        "Errore configurazione lega:",
+        caughtError,
+      );
+
+      alert(
+        "Errore durante il salvataggio della configurazione.",
+      );
+    } finally {
+      setIsSavingLeague(
+        false,
+      );
+    }
   }
 
   async function assignPlayer() {
@@ -500,7 +1385,8 @@ function App() {
 
     if (
       roleCount >=
-      roleLimits[
+      leagueSettings
+        .roleLimits[
         selectedPlayer.role
       ]
     ) {
@@ -514,6 +1400,7 @@ function App() {
     const maxBid =
       calculateMaxBid(
         selectedTeam,
+        leagueSettings.roleLimits,
       );
 
     if (
@@ -538,7 +1425,8 @@ function App() {
           team_id:
             selectedTeam.id,
 
-          price: parsedPrice,
+          price:
+            parsedPrice,
         });
 
     if (error) {
@@ -548,7 +1436,8 @@ function App() {
       );
 
       if (
-        error.code === "23505"
+        error.code ===
+        "23505"
       ) {
         alert(
           "Questo giocatore è già stato assegnato.",
@@ -564,8 +1453,14 @@ function App() {
       return;
     }
 
-    setSelectedPlayerId(null);
-    setSelectedTeamId(null);
+    setSelectedPlayerId(
+      null,
+    );
+
+    setSelectedTeamId(
+      null,
+    );
+
     setPlayerSearch("");
     setPrice("");
     setIsAdminOpen(false);
@@ -579,10 +1474,19 @@ function App() {
     player: Player,
     teamId: number,
   ) {
+    if (!session) {
+      setLoginError("");
+      setLoginPassword("");
+      setIsLoginOpen(true);
+      return;
+    }
+
     setEditingPurchase({
       playerId: player.id,
-      currentTeamId: teamId,
-      selectedTeamId: teamId,
+      currentTeamId:
+        teamId,
+      selectedTeamId:
+        teamId,
       price: String(
         player.price ?? 1,
       ),
@@ -641,7 +1545,9 @@ function App() {
       editingPurchase.selectedTeamId !==
       editingPurchase.currentTeamId;
 
-    if (movingToAnotherTeam) {
+    if (
+      movingToAnotherTeam
+    ) {
       const roleCount =
         getRolePlayers(
           destinationTeam,
@@ -650,7 +1556,8 @@ function App() {
 
       if (
         roleCount >=
-        roleLimits[
+        leagueSettings
+          .roleLimits[
           editingPlayer.role
         ]
       ) {
@@ -664,6 +1571,7 @@ function App() {
       const destinationMaxBid =
         calculateMaxBid(
           destinationTeam,
+          leagueSettings.roleLimits,
         );
 
       if (
@@ -678,7 +1586,8 @@ function App() {
       }
     } else {
       const oldPrice =
-        editingPlayer.price ?? 0;
+        editingPlayer.price ??
+        0;
 
       const creditsAfterRefund =
         calculateCredits(
@@ -686,12 +1595,8 @@ function App() {
         ) + oldPrice;
 
       const totalSlots =
-        Object.values(
-          roleLimits,
-        ).reduce(
-          (total, limit) =>
-            total + limit,
-          0,
+        calculateTotalSlots(
+          leagueSettings.roleLimits,
         );
 
       const missingPlayers =
@@ -703,7 +1608,8 @@ function App() {
         creditsAfterRefund -
         Math.max(
           0,
-          missingPlayers - 1,
+          missingPlayers -
+            1,
         );
 
       if (
@@ -727,7 +1633,8 @@ function App() {
           team_id:
             editingPurchase.selectedTeamId,
 
-          price: parsedPrice,
+          price:
+            parsedPrice,
         })
         .eq(
           "player_id",
@@ -749,7 +1656,9 @@ function App() {
       return;
     }
 
-    setEditingPurchase(null);
+    setEditingPurchase(
+      null,
+    );
 
     await loadAuctionData();
 
@@ -799,7 +1708,9 @@ function App() {
       return;
     }
 
-    setEditingPurchase(null);
+    setEditingPurchase(
+      null,
+    );
 
     await loadAuctionData();
 
@@ -825,7 +1736,9 @@ function App() {
         "Conferma definitiva: cancellare TUTTI gli acquisti?",
       );
 
-    if (!doubleConfirmed) {
+    if (
+      !doubleConfirmed
+    ) {
       return;
     }
 
@@ -852,9 +1765,18 @@ function App() {
       return;
     }
 
-    setEditingPurchase(null);
-    setSelectedPlayerId(null);
-    setSelectedTeamId(null);
+    setEditingPurchase(
+      null,
+    );
+
+    setSelectedPlayerId(
+      null,
+    );
+
+    setSelectedTeamId(
+      null,
+    );
+
     setPlayerSearch("");
     setPrice("");
     setLastPurchase(null);
@@ -880,7 +1802,9 @@ function App() {
               Asta Fantacalcio
             </p>
 
-            <h1>FantAsta</h1>
+            <h1>
+              FantAsta
+            </h1>
           </div>
         </header>
 
@@ -903,11 +1827,15 @@ function App() {
               Asta Fantacalcio
             </p>
 
-            <h1>FantAsta</h1>
+            <h1>
+              FantAsta
+            </h1>
           </div>
         </header>
 
-        <p>{loadError}</p>
+        <p>
+          {loadError}
+        </p>
 
         <button
           className="admin-button"
@@ -921,15 +1849,25 @@ function App() {
     );
   }
 
+  const totalRosterSlots =
+    calculateTotalSlots(
+      leagueSettings.roleLimits,
+    );
+
   return (
     <div className="auction-app">
       <header className="main-header">
         <div>
           <p className="eyebrow">
-            Asta Fantacalcio
+            FantAsta · Asta
+            Fantacalcio
           </p>
 
-          <h1>FantAsta</h1>
+          <h1>
+            {
+              leagueSettings.leagueName
+            }
+          </h1>
         </div>
 
         <div className="header-actions">
@@ -937,12 +1875,41 @@ function App() {
             Modalità TV
           </button>
 
-          <button
-            className="admin-button"
-            onClick={openAdmin}
-          >
-            Admin
-          </button>
+          {session ? (
+            <>
+              <button
+                className="admin-button"
+                onClick={openAdmin}
+              >
+                Admin
+              </button>
+
+              <button
+                className="secondary-button"
+                onClick={() =>
+                  void logoutAdmin()
+                }
+                disabled={
+                  isSaving ||
+                  isSavingLeague
+                }
+              >
+                Esci
+              </button>
+            </>
+          ) : (
+            <button
+              className="admin-button"
+              onClick={openAdmin}
+              disabled={
+                isAuthLoading
+              }
+            >
+              {isAuthLoading
+                ? "..."
+                : "Admin"}
+            </button>
+          )}
         </div>
       </header>
 
@@ -984,8 +1951,10 @@ function App() {
                       .teamName
                   }
 
-                  {lastPurchase.player
-                    .quotation != null &&
+                  {lastPurchase
+                    .player
+                    .quotation !=
+                    null &&
                     ` · Q ${lastPurchase.player.quotation}`}
                 </p>
               </>
@@ -998,8 +1967,9 @@ function App() {
 
                 <p className="current-club">
                   Usa il pannello
-                  Admin per registrare
-                  il primo acquisto.
+                  Admin per
+                  registrare il
+                  primo acquisto.
                 </p>
               </>
             )}
@@ -1022,7 +1992,18 @@ function App() {
         </section>
 
         <div className="board-wrapper">
-          <div className="board">
+          <div
+            className="board"
+            style={{
+              gridTemplateColumns: `repeat(${teams.length}, minmax(165px, 1fr))`,
+
+              minWidth: `${Math.max(
+                teams.length *
+                  170,
+                340,
+              )}px`,
+            }}
+          >
             {teams.map(
               (team) => {
                 const credits =
@@ -1033,19 +2014,24 @@ function App() {
                 const maxBid =
                   calculateMaxBid(
                     team,
+                    leagueSettings.roleLimits,
                   );
 
                 return (
                   <article
                     className="team-column"
-                    key={team.id}
+                    key={
+                      team.id
+                    }
                   >
                     <header className="team-header">
                       <div className="team-name-row">
                         <span className="status-dot" />
 
                         <h2>
-                          {team.name}
+                          {
+                            team.name
+                          }
                         </h2>
                       </div>
 
@@ -1055,7 +2041,9 @@ function App() {
                         </span>
 
                         <strong>
-                          {credits}
+                          {
+                            credits
+                          }
                         </strong>
                       </div>
 
@@ -1066,7 +2054,9 @@ function App() {
                           </span>
 
                           <strong>
-                            {maxBid}
+                            {
+                              maxBid
+                            }
                           </strong>
                         </div>
 
@@ -1081,21 +2071,28 @@ function App() {
                                 .players
                                 .length
                             }
-                            /25
+                            /
+                            {
+                              totalRosterSlots
+                            }
                           </strong>
                         </div>
                       </div>
 
                       <div className="role-counter">
                         {roles.map(
-                          (role) => (
+                          (
+                            role,
+                          ) => (
                             <div
                               key={
                                 role
                               }
                             >
                               <span>
-                                {role}
+                                {
+                                  role
+                                }
                               </span>
 
                               <strong>
@@ -1110,7 +2107,8 @@ function App() {
                                 <small>
                                   /
                                   {
-                                    roleLimits[
+                                    leagueSettings
+                                      .roleLimits[
                                       role
                                     ]
                                   }
@@ -1124,7 +2122,9 @@ function App() {
 
                     <div className="team-roster">
                       {roles.map(
-                        (role) => {
+                        (
+                          role,
+                        ) => {
                           const players =
                             getRolePlayers(
                               team,
@@ -1132,10 +2132,14 @@ function App() {
                             );
 
                           const emptySlots =
-                            roleLimits[
-                              role
-                            ] -
-                            players.length;
+                            Math.max(
+                              0,
+                              leagueSettings
+                                .roleLimits[
+                                role
+                              ] -
+                                players.length,
+                            );
 
                           return (
                             <section
@@ -1157,7 +2161,8 @@ function App() {
                                   }
                                   /
                                   {
-                                    roleLimits[
+                                    leagueSettings
+                                      .roleLimits[
                                       role
                                     ]
                                   }
@@ -1234,12 +2239,12 @@ function App() {
         </div>
       </main>
 
-      {isAdminOpen && (
+      {isLoginOpen && !session && (
         <div
           className="modal-backdrop"
           onClick={() => {
-            if (!isSaving) {
-              setIsAdminOpen(
+            if (!isLoggingIn) {
+              setIsLoginOpen(
                 false,
               );
             }
@@ -1254,11 +2259,144 @@ function App() {
             <div className="admin-modal-header">
               <div>
                 <p className="eyebrow">
+                  Accesso riservato
+                </p>
+
+                <h2>
+                  Login Admin
+                </h2>
+              </div>
+
+              <button
+                className="close-button"
+                onClick={() =>
+                  setIsLoginOpen(
+                    false,
+                  )
+                }
+                disabled={
+                  isLoggingIn
+                }
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="admin-form">
+              <label>
+                Email
+
+                <input
+                  type="email"
+                  value={
+                    loginEmail
+                  }
+                  onChange={(event) =>
+                    setLoginEmail(
+                      event.target
+                        .value,
+                    )
+                  }
+                  autoComplete="email"
+                  autoFocus
+                  disabled={
+                    isLoggingIn
+                  }
+                />
+              </label>
+
+              <label>
+                Password
+
+                <input
+                  type="password"
+                  value={
+                    loginPassword
+                  }
+                  onChange={(event) =>
+                    setLoginPassword(
+                      event.target
+                        .value,
+                    )
+                  }
+                  onKeyDown={(event) => {
+                    if (
+                      event.key ===
+                      "Enter"
+                    ) {
+                      void loginAdmin();
+                    }
+                  }}
+                  autoComplete="current-password"
+                  disabled={
+                    isLoggingIn
+                  }
+                />
+              </label>
+
+              {loginError && (
+                <p
+                  style={{
+                    margin: 0,
+                    color:
+                      "#ff8b8b",
+                  }}
+                >
+                  {loginError}
+                </p>
+              )}
+
+              <button
+                className="assign-button"
+                onClick={() =>
+                  void loginAdmin()
+                }
+                disabled={
+                  isLoggingIn ||
+                  !loginEmail.trim() ||
+                  !loginPassword
+                }
+              >
+                {isLoggingIn
+                  ? "Accesso..."
+                  : "Accedi come Admin"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isAdminOpen && session && (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            if (
+              !isSaving &&
+              !isSavingLeague
+            ) {
+              setIsAdminOpen(
+                false,
+              );
+            }
+          }}
+        >
+          <section
+            className="admin-modal"
+            onClick={(
+              event,
+            ) =>
+              event.stopPropagation()
+            }
+          >
+            <div className="admin-modal-header">
+              <div>
+                <p className="eyebrow">
                   Gestione asta
                 </p>
 
                 <h2>
-                  Registra acquisto
+                  Registra
+                  acquisto
                 </h2>
               </div>
 
@@ -1269,7 +2407,10 @@ function App() {
                     false,
                   )
                 }
-                disabled={isSaving}
+                disabled={
+                  isSaving ||
+                  isSavingLeague
+                }
               >
                 ×
               </button>
@@ -1307,7 +2448,8 @@ function App() {
 
               {!selectedPlayer &&
                 playerSearch.trim()
-                  .length > 0 && (
+                  .length >
+                  0 && (
                   <div
                     style={{
                       display:
@@ -1363,7 +2505,8 @@ function App() {
                       )
                     ) : (
                       <p>
-                        Nessun giocatore
+                        Nessun
+                        giocatore
                         disponibile
                         trovato.
                       </p>
@@ -1430,7 +2573,8 @@ function App() {
                       isSaving
                     }
                   >
-                    Cambia giocatore
+                    Cambia
+                    giocatore
                   </button>
                 </div>
               )}
@@ -1462,7 +2606,8 @@ function App() {
                   }
                 >
                   <option value="">
-                    Seleziona squadra
+                    Seleziona
+                    squadra
                   </option>
 
                   {teams.map(
@@ -1527,12 +2672,14 @@ function App() {
 
                   <div>
                     <span>
-                      Max spendibile
+                      Max
+                      spendibile
                     </span>
 
                     <strong>
                       {calculateMaxBid(
                         selectedTeam,
+                        leagueSettings.roleLimits,
                       )}
                     </strong>
                   </div>
@@ -1556,6 +2703,331 @@ function App() {
                   : "Assegna giocatore"}
               </button>
 
+              <section
+                style={{
+                  marginTop:
+                    "24px",
+                  paddingTop:
+                    "20px",
+                  borderTop:
+                    "1px solid rgba(255,255,255,.12)",
+                }}
+              >
+                <p className="eyebrow">
+                  Configurazione
+                </p>
+
+                <h3>
+                  Configurazione
+                  lega
+                </h3>
+
+                <p
+                  style={{
+                    opacity: 0.7,
+                    lineHeight:
+                      1.5,
+                  }}
+                >
+                  Imposta nome
+                  della lega,
+                  composizione
+                  delle rose,
+                  squadre e
+                  crediti
+                  iniziali.
+                </p>
+
+                <label>
+                  Nome lega
+
+                  <input
+                    type="text"
+                    value={
+                      leagueDraft.leagueName
+                    }
+                    onChange={(
+                      event,
+                    ) =>
+                      setLeagueDraft(
+                        (
+                          current,
+                        ) => ({
+                          ...current,
+
+                          leagueName:
+                            event
+                              .target
+                              .value,
+                        }),
+                      )
+                    }
+                    disabled={
+                      isSavingLeague
+                    }
+                  />
+                </label>
+
+                <div
+                  style={{
+                    display:
+                      "grid",
+                    gridTemplateColumns:
+                      "repeat(4, minmax(0, 1fr))",
+                    gap: "8px",
+                    marginTop:
+                      "12px",
+                  }}
+                >
+                  <label>
+                    P
+
+                    <input
+                      type="number"
+                      min="0"
+                      value={
+                        leagueDraft.goalkeeperSlots
+                      }
+                      onChange={(
+                        event,
+                      ) =>
+                        setLeagueDraft(
+                          (
+                            current,
+                          ) => ({
+                            ...current,
+
+                            goalkeeperSlots:
+                              event
+                                .target
+                                .value,
+                          }),
+                        )
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    D
+
+                    <input
+                      type="number"
+                      min="0"
+                      value={
+                        leagueDraft.defenderSlots
+                      }
+                      onChange={(
+                        event,
+                      ) =>
+                        setLeagueDraft(
+                          (
+                            current,
+                          ) => ({
+                            ...current,
+
+                            defenderSlots:
+                              event
+                                .target
+                                .value,
+                          }),
+                        )
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    C
+
+                    <input
+                      type="number"
+                      min="0"
+                      value={
+                        leagueDraft.midfielderSlots
+                      }
+                      onChange={(
+                        event,
+                      ) =>
+                        setLeagueDraft(
+                          (
+                            current,
+                          ) => ({
+                            ...current,
+
+                            midfielderSlots:
+                              event
+                                .target
+                                .value,
+                          }),
+                        )
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    A
+
+                    <input
+                      type="number"
+                      min="0"
+                      value={
+                        leagueDraft.forwardSlots
+                      }
+                      onChange={(
+                        event,
+                      ) =>
+                        setLeagueDraft(
+                          (
+                            current,
+                          ) => ({
+                            ...current,
+
+                            forwardSlots:
+                              event
+                                .target
+                                .value,
+                          }),
+                        )
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div
+                  style={{
+                    display:
+                      "grid",
+                    gap: "10px",
+                    marginTop:
+                      "18px",
+                  }}
+                >
+                  {leagueDraft.teams.map(
+                    (
+                      team,
+                      index,
+                    ) => (
+                      <div
+                        key={
+                          team.id ??
+                          `new-${index}`
+                        }
+                        style={{
+                          display:
+                            "grid",
+                          gridTemplateColumns:
+                            "1fr 120px auto",
+                          gap: "8px",
+                          alignItems:
+                            "end",
+                        }}
+                      >
+                        <label>
+                          Squadra{" "}
+                          {index +
+                            1}
+
+                          <input
+                            type="text"
+                            value={
+                              team.name
+                            }
+                            onChange={(
+                              event,
+                            ) =>
+                              updateDraftTeam(
+                                index,
+                                "name",
+                                event
+                                  .target
+                                  .value,
+                              )
+                            }
+                          />
+                        </label>
+
+                        <label>
+                          Crediti
+
+                          <input
+                            type="number"
+                            min="1"
+                            value={
+                              team.startingCredits
+                            }
+                            onChange={(
+                              event,
+                            ) =>
+                              updateDraftTeam(
+                                index,
+                                "startingCredits",
+                                event
+                                  .target
+                                  .value,
+                              )
+                            }
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          className="delete-button"
+                          onClick={() =>
+                            removeDraftTeam(
+                              index,
+                            )
+                          }
+                          disabled={
+                            leagueDraft
+                              .teams
+                              .length <=
+                            2
+                          }
+                        >
+                          Rimuovi
+                        </button>
+                      </div>
+                    ),
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  className="secondary-button"
+                  style={{
+                    marginTop:
+                      "12px",
+                  }}
+                  onClick={
+                    addDraftTeam
+                  }
+                  disabled={
+                    isSavingLeague
+                  }
+                >
+                  + Aggiungi
+                  squadra
+                </button>
+
+                <button
+                  type="button"
+                  className="assign-button"
+                  style={{
+                    marginTop:
+                      "14px",
+                  }}
+                  onClick={() =>
+                    void saveLeagueConfiguration()
+                  }
+                  disabled={
+                    isSavingLeague
+                  }
+                >
+                  {isSavingLeague
+                    ? "Salvataggio..."
+                    : "Salva configurazione"}
+                </button>
+              </section>
+
               <ListoneImport
                 onImportComplete={
                   loadAuctionData
@@ -1564,8 +3036,10 @@ function App() {
 
               <section
                 style={{
-                  marginTop: "24px",
-                  paddingTop: "20px",
+                  marginTop:
+                    "24px",
+                  paddingTop:
+                    "20px",
                   borderTop:
                     "1px solid rgba(255,255,255,.12)",
                 }}
@@ -1581,15 +3055,21 @@ function App() {
                 <p
                   style={{
                     opacity: 0.7,
-                    lineHeight: 1.5,
+                    lineHeight:
+                      1.5,
                   }}
                 >
-                  Cancella tutti gli
-                  acquisti registrati e
-                  rende nuovamente
-                  disponibili tutti i
-                  giocatori. Il Listone
-                  non viene modificato.
+                  Cancella tutti
+                  gli acquisti
+                  registrati e
+                  rende
+                  nuovamente
+                  disponibili
+                  tutti i
+                  giocatori. Il
+                  Listone non
+                  viene
+                  modificato.
                 </p>
 
                 <button
@@ -1598,9 +3078,12 @@ function App() {
                   onClick={() =>
                     void resetAuction()
                   }
-                  disabled={isSaving}
+                  disabled={
+                    isSaving
+                  }
                 >
-                  Reset completo asta
+                  Reset completo
+                  asta
                 </button>
               </section>
             </div>
@@ -1608,12 +3091,15 @@ function App() {
         </div>
       )}
 
-      {editingPurchase &&
+      {session &&
+        editingPurchase &&
         editingPlayer && (
           <div
             className="modal-backdrop"
             onClick={() => {
-              if (!isSaving) {
+              if (
+                !isSaving
+              ) {
                 setEditingPurchase(
                   null,
                 );
@@ -1622,7 +3108,9 @@ function App() {
           >
             <section
               className="admin-modal"
-              onClick={(event) =>
+              onClick={(
+                event,
+              ) =>
                 event.stopPropagation()
               }
             >

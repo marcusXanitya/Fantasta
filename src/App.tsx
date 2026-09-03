@@ -186,6 +186,9 @@ function App() {
 
   const [calledPlayerId, setCalledPlayerId] = useState<number | null>(null);
   const [isCallingPlayer, setIsCallingPlayer] = useState(false);
+  const [tvFocusTeamId, setTvFocusTeamId] = useState<number | null>(null);
+  const [tvFocusUntil, setTvFocusUntil] = useState<string | null>(null);
+  const [tvClock, setTvClock] = useState(() => Date.now());
 
   const [
     leagueSettings,
@@ -524,19 +527,21 @@ function App() {
       [],
     );
 
-  const loadCalledPlayer = useCallback(async () => {
+  const loadAuctionState = useCallback(async () => {
     const { data, error } = await supabase
       .from("auction_state")
-      .select("called_player_id")
+      .select("called_player_id, tv_focus_team_id, tv_focus_until")
       .eq("id", 1)
       .maybeSingle();
 
     if (error) {
-      console.error("Errore lettura giocatore chiamato:", error);
+      console.error("Errore lettura stato asta:", error);
       return;
     }
 
     setCalledPlayerId(data?.called_player_id ?? null);
+    setTvFocusTeamId(data?.tv_focus_team_id ?? null);
+    setTvFocusUntil(data?.tv_focus_until ?? null);
   }, []);
 
   useEffect(() => {
@@ -594,7 +599,7 @@ function App() {
 
   useEffect(() => {
     void loadAuctionData();
-    void loadCalledPlayer();
+    void loadAuctionState();
 
     const channel =
       supabase
@@ -613,7 +618,7 @@ function App() {
               payload,
             );
             void loadAuctionData();
-            void loadCalledPlayer();
+            void loadAuctionState();
           },
         )
         .subscribe(
@@ -630,7 +635,17 @@ function App() {
         channel,
       );
     };
-  }, [loadAuctionData, loadCalledPlayer]);
+  }, [loadAuctionData, loadAuctionState]);
+
+  useEffect(() => {
+    if (!isTvMode) return;
+
+    const timer = window.setInterval(() => {
+      setTvClock(Date.now());
+    }, 500);
+
+    return () => window.clearInterval(timer);
+  }, [isTvMode]);
 
   const assignedPlayerIds =
     useMemo(() => {
@@ -714,6 +729,42 @@ function App() {
   }
 
 
+  async function showTeamOnTv(teamId: number) {
+    if (!session) return;
+
+    const until = new Date(Date.now() + 10_000).toISOString();
+    const { error } = await supabase
+      .from("auction_state")
+      .update({ tv_focus_team_id: teamId, tv_focus_until: until })
+      .eq("id", 1);
+
+    if (error) {
+      console.error("Errore focus squadra TV:", error);
+      alert("Errore durante l'apertura della squadra sulla TV.");
+      return;
+    }
+
+    setTvFocusTeamId(teamId);
+    setTvFocusUntil(until);
+  }
+
+  async function clearTvFocus() {
+    if (!session) return;
+
+    const { error } = await supabase
+      .from("auction_state")
+      .update({ tv_focus_team_id: null, tv_focus_until: null })
+      .eq("id", 1);
+
+    if (error) {
+      console.error("Errore chiusura focus TV:", error);
+      alert("Errore durante il ritorno alla panoramica TV.");
+      return;
+    }
+
+    setTvFocusTeamId(null);
+    setTvFocusUntil(null);
+  }
 
   const selectedTeam =
     teams.find(
@@ -1924,19 +1975,201 @@ function App() {
       leagueSettings.roleLimits,
     );
 
+  const tvFocusIsActive =
+    Boolean(tvFocusTeamId) &&
+    Boolean(tvFocusUntil) &&
+    new Date(tvFocusUntil as string).getTime() > tvClock;
+
+  const tvFocusedTeam = tvFocusIsActive
+    ? teams.find((team) => team.id === tvFocusTeamId) ?? null
+    : null;
+
   if (isTvMode) {
+    const renderTvRoster = (team: Team, isFocus = false) => {
+      const credits = calculateCredits(team);
+      const maxBid = calculateMaxBid(team, leagueSettings.roleLimits);
+
+      return (
+        <article
+          key={team.id}
+          style={{
+            minWidth: 0,
+            minHeight: 0,
+            overflow: "hidden",
+            borderRadius: isFocus ? "22px" : "14px",
+            border: "1px solid rgba(255,255,255,.12)",
+            background: "#15181e",
+            display: "grid",
+            gridTemplateRows: "auto minmax(0, 1fr)",
+            boxShadow: isFocus ? "0 28px 90px rgba(0,0,0,.45)" : "0 8px 28px rgba(0,0,0,.18)",
+          }}
+        >
+          <header
+            style={{
+              padding: isFocus ? "20px 24px" : "10px 13px",
+              borderBottom: "1px solid rgba(255,255,255,.09)",
+              background: "rgba(255,255,255,.04)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+              }}
+            >
+              <strong
+                title={team.name}
+                style={{
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontSize: isFocus ? "clamp(34px, 4.2vw, 72px)" : "clamp(17px, 1.35vw, 27px)",
+                  letterSpacing: "-.025em",
+                }}
+              >
+                {team.name}
+              </strong>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: isFocus ? "10px" : "6px",
+                  fontSize: isFocus ? "clamp(30px, 3.5vw, 62px)" : "clamp(18px, 1.45vw, 29px)",
+                  fontWeight: 950,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span className="coin">C</span>{credits}
+              </div>
+            </div>
+            <div
+              style={{
+                marginTop: isFocus ? "10px" : "5px",
+                display: "flex",
+                justifyContent: "space-between",
+                gap: "12px",
+                color: "rgba(255,255,255,.58)",
+                fontSize: isFocus ? "clamp(16px, 1.45vw, 25px)" : "clamp(11px, .78vw, 16px)",
+                fontWeight: 750,
+              }}
+            >
+              <span>MAX {maxBid} C</span>
+              <span>{team.players.length}/{totalRosterSlots} giocatori</span>
+            </div>
+          </header>
+
+          <div
+            style={{
+              minHeight: 0,
+              overflowY: "auto",
+              overscrollBehavior: "contain",
+              scrollbarGutter: "stable",
+              padding: isFocus ? "10px 18px 18px" : "4px 8px 10px",
+            }}
+          >
+            {roles.map((role) => {
+              const rolePlayers = getRolePlayers(team, role);
+              if (rolePlayers.length === 0) return null;
+
+              return (
+                <section key={role} style={{ marginTop: isFocus ? "12px" : "6px" }}>
+                  <div
+                    style={{
+                      position: "sticky",
+                      top: 0,
+                      zIndex: 2,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "8px",
+                      padding: isFocus ? "7px 8px" : "4px 3px",
+                      background: "#15181e",
+                      borderBottom: "1px solid rgba(255,255,255,.08)",
+                      fontSize: isFocus ? "clamp(16px, 1.35vw, 24px)" : "clamp(11px, .78vw, 15px)",
+                      fontWeight: 900,
+                    }}
+                  >
+                    <span className={`role-badge role-${role.toLowerCase()}`}>{role}</span>
+                    <span style={{ color: "rgba(255,255,255,.56)" }}>
+                      {rolePlayers.length}/{leagueSettings.roleLimits[role]}
+                    </span>
+                  </div>
+
+                  {rolePlayers.map((player) => (
+                    <div
+                      key={player.id}
+                      style={{
+                        minHeight: isFocus ? "clamp(42px, 4.1vh, 62px)" : "clamp(27px, 2.75vh, 38px)",
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1fr) auto",
+                        alignItems: "center",
+                        gap: "10px",
+                        padding: isFocus ? "5px 9px" : "2px 4px",
+                        borderBottom: "1px solid rgba(255,255,255,.045)",
+                      }}
+                    >
+                      <span
+                        title={player.name}
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          fontWeight: 780,
+                          fontSize: isFocus ? "clamp(22px, 2vw, 36px)" : "clamp(14px, 1.02vw, 20px)",
+                        }}
+                      >
+                        {player.name}
+                      </span>
+                      <strong
+                        style={{
+                          fontSize: isFocus ? "clamp(20px, 1.8vw, 32px)" : "clamp(13px, .95vw, 19px)",
+                          color: "rgba(255,255,255,.88)",
+                        }}
+                      >
+                        {player.price}
+                      </strong>
+                    </div>
+                  ))}
+                </section>
+              );
+            })}
+
+            {team.players.length === 0 && (
+              <div
+                style={{
+                  height: "100%",
+                  minHeight: "90px",
+                  display: "grid",
+                  placeItems: "center",
+                  color: "rgba(255,255,255,.28)",
+                  fontWeight: 800,
+                  fontSize: isFocus ? "22px" : "14px",
+                }}
+              >
+                Rosa ancora vuota
+              </div>
+            )}
+          </div>
+        </article>
+      );
+    };
+
     return (
       <div
         style={{
-          minHeight: "100vh",
-          height: "100vh",
+          width: "100vw",
+          height: "100dvh",
           overflow: "hidden",
           background: "#0d0f13",
           color: "#f4f6f8",
-          padding: "clamp(10px, 1.1vw, 20px)",
+          padding: "clamp(8px, .7vw, 14px)",
+          boxSizing: "border-box",
           display: "grid",
-          gridTemplateRows: "auto auto auto minmax(0, 1fr)",
-          gap: "clamp(8px, .8vw, 14px)",
+          gridTemplateRows: tvFocusedTeam ? "auto minmax(0, 1fr)" : "auto auto auto minmax(0, 1fr)",
+          gap: "clamp(7px, .55vw, 11px)",
         }}
       >
         <header
@@ -1944,32 +2177,17 @@ function App() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: "20px",
-            minHeight: "48px",
+            gap: "18px",
+            minHeight: "38px",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              gap: "14px",
-              minWidth: 0,
-            }}
-          >
-            <strong
-              style={{
-                fontSize: "clamp(22px, 1.8vw, 34px)",
-                letterSpacing: "-.04em",
-                whiteSpace: "nowrap",
-              }}
-            >
-              FantAsta
-            </strong>
+          <div style={{ display: "flex", alignItems: "baseline", gap: "12px", minWidth: 0 }}>
+            <strong style={{ fontSize: "clamp(22px, 1.7vw, 34px)", letterSpacing: "-.04em" }}>FantAsta</strong>
             <span
               style={{
-                color: "rgba(255,255,255,.68)",
+                color: "rgba(255,255,255,.62)",
                 fontSize: "clamp(13px, .9vw, 18px)",
-                fontWeight: 700,
+                fontWeight: 750,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -1978,333 +2196,135 @@ function App() {
               {leagueSettings.leagueName}
             </span>
           </div>
-
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <span
-              style={{
-                width: "9px",
-                height: "9px",
-                borderRadius: "50%",
-                background: "#48d597",
-                boxShadow: "0 0 12px rgba(72,213,151,.75)",
-              }}
-            />
-            <strong
-              style={{
-                fontSize: "clamp(11px, .7vw, 14px)",
-                letterSpacing: ".12em",
-              }}
-            >
-              LIVE
-            </strong>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", whiteSpace: "nowrap" }}>
+            <span style={{ width: "9px", height: "9px", borderRadius: "50%", background: "#48d597", boxShadow: "0 0 12px rgba(72,213,151,.75)" }} />
+            <strong style={{ fontSize: "clamp(11px, .7vw, 14px)", letterSpacing: ".12em" }}>LIVE</strong>
           </div>
         </header>
 
-        <section
-          style={{
-            minHeight: "76px",
-            borderRadius: "12px",
-            border: calledPlayer ? "1px solid rgba(103,232,249,.35)" : "1px solid rgba(255,255,255,.06)",
-            background: calledPlayer ? "rgba(103,232,249,.07)" : "rgba(255,255,255,.02)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            textAlign: "center",
-            padding: "8px 20px",
-          }}
-        >
-          {calledPlayer ? (
-            <div>
-              <div style={{ fontSize: "clamp(9px,.62vw,12px)", fontWeight: 800, letterSpacing: ".16em", color: "rgba(103,232,249,.8)", textTransform: "uppercase" }}>Giocatore all'asta</div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", flexWrap: "wrap", marginTop: "4px" }}>
-                <span style={{ fontSize: "clamp(26px,2.6vw,50px)", lineHeight: 1, fontWeight: 950, letterSpacing: "-.035em" }}>
-                  {calledPlayer.name} <span style={{ color: "rgba(255,255,255,.5)", fontWeight: 750 }}>({calledPlayer.club})</span>
-                </span>
-                <span
-                  className={`role-badge role-${calledPlayer.role.toLowerCase()}`}
-                  style={{
-                    fontSize: "clamp(22px,1.8vw,32px)",
-                    width: "clamp(46px,3.3vw,64px)",
-                    height: "clamp(46px,3.3vw,64px)",
-                    flex: "0 0 auto",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderRadius: "12px",
-                    border: "1px solid rgba(255,255,255,.22)",
-                    boxShadow: "0 8px 24px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.14)",
-                    fontWeight: 950,
-                    lineHeight: 1,
-                  }}
-                >
-                  {calledPlayer.role}
-                </span>
-              </div>
+        {tvFocusedTeam ? (
+          <section style={{ minHeight: 0, display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", gap: "10px" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "16px",
+                padding: "9px 14px",
+                borderRadius: "12px",
+                border: "1px solid rgba(103,232,249,.20)",
+                background: "rgba(103,232,249,.06)",
+              }}
+            >
+              <strong style={{ fontSize: "clamp(14px, 1vw, 20px)", textTransform: "uppercase", letterSpacing: ".09em", color: "rgba(103,232,249,.85)" }}>
+                Rosa in primo piano
+              </strong>
+              <span style={{ color: "rgba(255,255,255,.50)", fontSize: "clamp(12px, .8vw, 16px)" }}>
+                ritorno automatico alla panoramica
+              </span>
             </div>
-          ) : (
-            <div style={{ color: "rgba(255,255,255,.28)", fontWeight: 800, letterSpacing: ".1em", textTransform: "uppercase", fontSize: "clamp(10px,.7vw,13px)" }}>In attesa della prossima chiamata</div>
-          )}
-        </section>
-
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-            gap: "8px",
-          }}
-        >
-          {Array.from({ length: 5 }).map((_, index) => {
-            const item = recentPurchases[index];
-
-            if (!item) {
-              return (
-                <div
-                  key={`tv-recent-empty-${index}`}
-                  style={{
-                    minHeight: "52px",
-                    border: "1px solid rgba(255,255,255,.06)",
-                    borderRadius: "10px",
-                    background: "rgba(255,255,255,.02)",
-                  }}
-                />
-              );
-            }
-
-            return (
-              <div
-                key={item.purchaseId}
-                style={{
-                  minWidth: 0,
-                  padding: "8px 10px",
-                  borderRadius: "10px",
-                  border:
-                    index === 0
-                      ? "1px solid rgba(255,255,255,.20)"
-                      : "1px solid rgba(255,255,255,.08)",
-                  background:
-                    index === 0
-                      ? "rgba(255,255,255,.08)"
-                      : "rgba(255,255,255,.035)",
-                  display: "grid",
-                  gridTemplateColumns: "auto minmax(0, 1fr) auto",
-                  alignItems: "center",
-                  gap: "8px",
-                }}
-              >
-                <span className={`role-badge role-${item.player.role.toLowerCase()}`}>
-                  {item.player.role}
-                </span>
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: "clamp(11px, .75vw, 15px)",
-                      fontWeight: 800,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {item.player.name} <span style={{ color: "rgba(255,255,255,.48)", fontWeight: 650 }}>({item.player.club})</span>
-                  </div>
-                  <div
-                    style={{
-                      color: "rgba(255,255,255,.62)",
-                      fontSize: "clamp(9px, .58vw, 12px)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {item.teamName}
-                  </div>
-                </div>
-                <strong style={{ fontSize: "clamp(14px, 1vw, 20px)", display: "flex", alignItems: "center", gap: "4px" }}>
-                  <span className="coin">C</span>{item.player.price}
-                </strong>
-              </div>
-            );
-          })}
-        </section>
-
-        <section
-          style={{
-            minHeight: 0,
-            display: "grid",
-            gridTemplateColumns: `repeat(${Math.max(teams.length, 1)}, minmax(0, 1fr))`,
-            gap: "clamp(4px, .42vw, 8px)",
-          }}
-        >
-          {teams.map((team) => {
-            const credits = calculateCredits(team);
-            const maxBid = calculateMaxBid(team, leagueSettings.roleLimits);
-
-            return (
-              <article
-                key={team.id}
-                style={{
-                  minWidth: 0,
-                  minHeight: 0,
-                  overflow: "hidden",
-                  borderRadius: "10px",
-                  border: "1px solid rgba(255,255,255,.10)",
-                  background: "#15181e",
-                  display: "grid",
-                  gridTemplateRows: "auto minmax(0, 1fr)",
-                }}
-              >
-                <header
-                  style={{
-                    padding: "clamp(7px, .55vw, 11px)",
-                    borderBottom: "1px solid rgba(255,255,255,.09)",
-                    background: "rgba(255,255,255,.035)",
-                  }}
-                >
-                  <div
-                    style={{
-                      minHeight: "30px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: "5px",
-                    }}
-                  >
-                    <strong
-                      title={team.name}
-                      style={{
-                        minWidth: 0,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        fontSize: "clamp(12px, .88vw, 18px)",
-                      }}
-                    >
-                      {team.name}
-                    </strong>
+            {renderTvRoster(tvFocusedTeam, true)}
+          </section>
+        ) : (
+          <>
+            <section
+              style={{
+                minHeight: "72px",
+                borderRadius: "12px",
+                border: calledPlayer ? "1px solid rgba(103,232,249,.35)" : "1px solid rgba(255,255,255,.06)",
+                background: calledPlayer ? "rgba(103,232,249,.07)" : "rgba(255,255,255,.02)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                textAlign: "center",
+                padding: "7px 18px",
+              }}
+            >
+              {calledPlayer ? (
+                <div>
+                  <div style={{ fontSize: "clamp(10px,.66vw,13px)", fontWeight: 850, letterSpacing: ".16em", color: "rgba(103,232,249,.8)", textTransform: "uppercase" }}>Giocatore all'asta</div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "11px", marginTop: "3px" }}>
+                    <span style={{ fontSize: "clamp(28px,2.8vw,54px)", lineHeight: 1, fontWeight: 950, letterSpacing: "-.035em" }}>
+                      {calledPlayer.name} <span style={{ color: "rgba(255,255,255,.5)", fontWeight: 750 }}>({calledPlayer.club})</span>
+                    </span>
                     <span
+                      className={`role-badge role-${calledPlayer.role.toLowerCase()}`}
                       style={{
-                        fontSize: "clamp(14px, 1.15vw, 23px)",
-                        fontWeight: 900,
-                        whiteSpace: "nowrap",
+                        fontSize: "clamp(22px,1.8vw,32px)",
+                        width: "clamp(46px,3.3vw,64px)",
+                        height: "clamp(46px,3.3vw,64px)",
+                        flex: "0 0 auto",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        borderRadius: "12px",
+                        border: "1px solid rgba(255,255,255,.22)",
+                        fontWeight: 950,
                       }}
                     >
-                      {credits}
+                      {calledPlayer.role}
                     </span>
                   </div>
+                </div>
+              ) : (
+                <div style={{ color: "rgba(255,255,255,.28)", fontWeight: 800, letterSpacing: ".1em", textTransform: "uppercase", fontSize: "clamp(11px,.75vw,14px)" }}>
+                  In attesa della prossima chiamata
+                </div>
+              )}
+            </section>
+
+            <section style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "7px" }}>
+              {Array.from({ length: 5 }).map((_, index) => {
+                const item = recentPurchases[index];
+                if (!item) {
+                  return <div key={`tv-recent-empty-${index}`} style={{ minHeight: "44px", border: "1px solid rgba(255,255,255,.05)", borderRadius: "9px", background: "rgba(255,255,255,.018)" }} />;
+                }
+
+                return (
                   <div
+                    key={item.purchaseId}
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: "5px",
-                      color: "rgba(255,255,255,.48)",
-                      fontSize: "clamp(8px, .5vw, 10px)",
+                      minWidth: 0,
+                      padding: "6px 8px",
+                      borderRadius: "9px",
+                      border: index === 0 ? "1px solid rgba(255,255,255,.20)" : "1px solid rgba(255,255,255,.08)",
+                      background: index === 0 ? "rgba(255,255,255,.08)" : "rgba(255,255,255,.035)",
+                      display: "grid",
+                      gridTemplateColumns: "auto minmax(0, 1fr) auto",
+                      alignItems: "center",
+                      gap: "7px",
                     }}
                   >
-                    <span>max {maxBid}</span>
-                    <span>{team.players.length}/{totalRosterSlots}</span>
+                    <span className={`role-badge role-${item.player.role.toLowerCase()}`}>{item.player.role}</span>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: "clamp(12px, .82vw, 16px)", fontWeight: 820, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.player.name} <span style={{ color: "rgba(255,255,255,.48)", fontWeight: 650 }}>({item.player.club})</span>
+                      </div>
+                      <div style={{ color: "rgba(255,255,255,.60)", fontSize: "clamp(10px, .62vw, 13px)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.teamName}
+                      </div>
+                    </div>
+                    <strong style={{ fontSize: "clamp(14px, 1vw, 20px)", display: "flex", alignItems: "center", gap: "4px" }}>
+                      <span className="coin">C</span>{item.player.price}
+                    </strong>
                   </div>
-                </header>
+                );
+              })}
+            </section>
 
-                <div
-                  style={{
-                    minHeight: 0,
-                    overflow: "hidden",
-                    display: "grid",
-                    gridTemplateRows: `repeat(${roles.length}, minmax(0, auto))`,
-                    alignContent: "start",
-                  }}
-                >
-                  {roles.map((role) => {
-                    const rolePlayers = getRolePlayers(team, role);
-                    const emptySlots = Math.max(
-                      0,
-                      leagueSettings.roleLimits[role] - rolePlayers.length,
-                    );
-
-                    return (
-                      <section
-                        key={role}
-                        style={{
-                          minWidth: 0,
-                          borderBottom: "1px solid rgba(255,255,255,.055)",
-                        }}
-                      >
-                        <div
-                          style={{
-                            height: "clamp(16px, 1.25vh, 22px)",
-                            padding: "0 6px",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            fontSize: "clamp(8px, .5vw, 10px)",
-                            fontWeight: 900,
-                            color: "rgba(255,255,255,.72)",
-                          }}
-                        >
-                          <span>{role}</span>
-                          <span>{rolePlayers.length}/{leagueSettings.roleLimits[role]}</span>
-                        </div>
-
-                        {rolePlayers.map((player) => (
-                          <div
-                            key={player.id}
-                            style={{
-                              height: "clamp(18px, 1.78vh, 27px)",
-                              minWidth: 0,
-                              padding: "0 6px",
-                              display: "grid",
-                              gridTemplateColumns: "minmax(0, 1fr) auto",
-                              alignItems: "center",
-                              gap: "4px",
-                              borderTop: "1px solid rgba(255,255,255,.035)",
-                            }}
-                          >
-                            <span
-                              title={player.name}
-                              style={{
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                fontWeight: 700,
-                                fontSize: "clamp(8px, .55vw, 11px)",
-                              }}
-                            >
-                              {player.name}
-                            </span>
-                            <strong
-                              style={{
-                                fontSize: "clamp(8px, .55vw, 11px)",
-                              }}
-                            >
-                              {player.price}
-                            </strong>
-                          </div>
-                        ))}
-
-                        {Array.from({ length: emptySlots }).map((_, index) => (
-                          <div
-                            key={`${team.id}-${role}-tv-empty-${index}`}
-                            style={{
-                              height: "clamp(18px, 1.78vh, 27px)",
-                              borderTop: "1px solid rgba(255,255,255,.025)",
-                              background: "rgba(255,255,255,.008)",
-                            }}
-                          />
-                        ))}
-                      </section>
-                    );
-                  })}
-                </div>
-              </article>
-            );
-          })}
-        </section>
+            <section
+              style={{
+                minHeight: 0,
+                display: "grid",
+                gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+                gridTemplateRows: "repeat(2, minmax(0, 1fr))",
+                gap: "clamp(7px, .55vw, 11px)",
+              }}
+            >
+              {teams.map((team) => renderTvRoster(team))}
+            </section>
+          </>
+        )}
       </div>
     );
   }
@@ -3286,6 +3306,30 @@ function App() {
                           </strong>
                         </div>
                       </div>
+
+                      {session && (
+                        <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            style={{ flex: 1, minHeight: "32px", padding: "5px 8px", fontSize: "11px" }}
+                            onClick={() => void showTeamOnTv(team.id)}
+                          >
+                            Mostra su TV
+                          </button>
+                          {tvFocusTeamId === team.id && (
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              style={{ minHeight: "32px", padding: "5px 8px", fontSize: "11px" }}
+                              onClick={() => void clearTvFocus()}
+                              title="Torna alla panoramica TV"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
+                      )}
 
                       <div className="role-counter">
                         {roles.map(
